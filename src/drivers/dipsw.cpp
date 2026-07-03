@@ -1,0 +1,75 @@
+#include "dipsw.h"
+#include "../mbw_common.h"
+#include "../rtos_glue.h"
+
+// 74HC165: khong dung CLK_INH tren board nay (luon cho phep dich, xem
+// docs/Hardware.md) -> chi can 1 xung LOAD + 8 xung CLK.
+void dip_init() {
+  pinMode(SW_LOAD, OUTPUT);
+  digitalWrite(SW_LOAD, HIGH);
+  pinMode(SW_SCK, OUTPUT);
+  digitalWrite(SW_SCK, LOW);
+  pinMode(SW_MISO, INPUT);
+}
+
+uint8_t dip_read_raw() {
+  // Chot du lieu song song (SH/LD muc thap = load)
+  digitalWrite(SW_LOAD, LOW);
+  delayMicroseconds(5);
+  digitalWrite(SW_LOAD, HIGH);
+
+  uint8_t val = 0;
+  for (uint8_t i = 0; i < 8; i++) {
+    uint8_t bit = digitalRead(SW_MISO) ? 1 : 0; // QH: bit dau tien la MSB (H)
+    val |= (uint8_t)(bit << (7 - i));
+    digitalWrite(SW_SCK, HIGH);
+    delayMicroseconds(2);
+    digitalWrite(SW_SCK, LOW);
+    delayMicroseconds(2);
+  }
+  return val; // TODO: doi chieu chieu ON/OFF thuc te (switch dong = 0 hay 1?)
+}
+
+uint8_t dip_network_id() {
+  uint8_t raw = dip_read_raw();
+  return raw & 0x3F; // bit0-5 = SW1-6 (gia dinh, xem ghi chu trong dipsw.h)
+}
+
+uint8_t dip_baud_sel() {
+  uint8_t raw = dip_read_raw();
+  return (raw >> 6) & 0x03; // bit6-7 = SW7-8
+}
+
+uint32_t dip_baud_value() {
+  static const uint32_t table[4] = {4800, 9600, 14400, 19200};
+  return table[dip_baud_sel()];
+}
+
+void dip_process() {
+  static uint8_t last = 0xFF;
+  static bool first = true;
+  static uint32_t t_chg = 0;
+  static uint8_t cand = 0xFF;
+
+  uint8_t v = dip_read_raw();
+  uint32_t now = millis();
+
+  if (v != cand) {
+    cand = v;
+    t_chg = now;
+  }
+  if ((first || v != last) && (now - t_chg >= 30)) { // on dinh 30ms
+    first = false;
+    last = v;
+    dbg_lock();
+    SerialDBG.print("DIP: 0x");
+    if (v < 0x10)
+      SerialDBG.print("0");
+    SerialDBG.print(v, HEX);
+    SerialDBG.print(" NETID=");
+    SerialDBG.print(v & 0x3F);
+    SerialDBG.print(" BAUD=");
+    SerialDBG.println(dip_baud_value());
+    dbg_unlock();
+  }
+}

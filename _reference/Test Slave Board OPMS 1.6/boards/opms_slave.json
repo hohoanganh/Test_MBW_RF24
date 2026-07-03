@@ -1,0 +1,28 @@
+{
+  "build": {
+    "core": "stm32",
+    "cpu": "cortex-m4",
+    "extra_flags": "-DSTM32F3xx -DSTM32F303xC",
+    "f_cpu": "72000000L",
+    "mcu": "stm32f303vct6",
+    "product_line": "STM32F303xC",
+    "variant": "STM32F3xx/F303V(B-C)T_F358VCT",
+    "variant_h": "variant_generic.h"
+  },
+  "debug": {
+    "default_tools": ["stlink"],
+    "jlink_device": "STM32F303VC",
+    "openocd_target": "stm32f3x",
+    "svd_path": "STM32F303.svd"
+  },
+  "frameworks": ["arduino", "cmsis", "stm32cube", "libopencm3"],
+  "name": "OPMS 1.6 Slave Board (STM32F303VCT6, 40k RAM, 256k Flash)",
+  "upload": {
+    "maximum_ram_size": 40960,
+    "maximum_size": 262144,
+    "protocol": "stlink",
+    "protocols": ["stlink", "jlink", "cmsis-dap", "blackmagic", "serial", "dfu"]
+  },
+  "url": "https://www.st.com/en/microcontrollers-microprocessors/stm32f303vc.html",
+  "vendor": "EPCB"
+}

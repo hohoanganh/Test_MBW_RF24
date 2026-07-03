@@ -1,0 +1,26 @@
+{
+  "build": {
+    "core": "stm32",
+    "cpu": "cortex-m3",
+    "extra_flags": "-DSTM32L1xx -DSTM32L151xB",
+    "f_cpu": "32000000L",
+    "mcu": "stm32l151c8t6",
+    "product_line": "STM32L151xB",
+    "variant": "STM32L1xx/L100C6Ux(A)_L151C(6-8-B)(T-U)x(A)_L152C(6-8-B)(T-U)x(A)"
+  },
+  "debug": {
+    "jlink_device": "STM32L151C8",
+    "openocd_target": "stm32l1",
+    "svd_path": "STM32L15xC.svd"
+  },
+  "frameworks": ["arduino", "cmsis", "stm32cube"],
+  "name": "Generic STM32L151C8 (10k RAM, 64k Flash) - MBW RF24 board",
+  "upload": {
+    "maximum_ram_size": 10240,
+    "maximum_size": 65536,
+    "protocol": "stlink",
+    "protocols": ["stlink", "jlink", "cmsis-dap", "blackmagic", "serial", "dfu"]
+  },
+  "url": "https://www.st.com/en/microcontrollers-microprocessors/stm32l151c8.html",
+  "vendor": "Generic"
+}
