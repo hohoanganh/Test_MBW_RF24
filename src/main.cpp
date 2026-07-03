@@ -73,9 +73,23 @@ void setup() {
   uart_log("RTOS: 3 task (RS485/Bridge, RF, CLI+peripherals) - xem 'rtos stat'");
   uart_log("Type: help");
 
-  xTaskCreate(task_rs485, "RS485", RTOS_STACK_RS485, NULL, RTOS_PRIO_RS485, &g_hTaskRS485);
-  xTaskCreate(task_rf, "RF", RTOS_STACK_RF, NULL, RTOS_PRIO_RF, &g_hTaskRF);
-  xTaskCreate(task_cli, "CLI", RTOS_STACK_CLI, NULL, RTOS_PRIO_CLI, &g_hTaskCLI);
+  // ===== DEBUG: kiem tra xTaskCreate co that bai khong (allocator thuc te la
+  // newlib malloc - xem heap_useNewlib_ST.c - truoc vTaskStartScheduler() gioi
+  // han cap phat la CON TRO STACK HIEN TAI, khong phai 1 con so co dinh, nen
+  // KHONG duoc chen them lenh in xen giua 3 lan xTaskCreate (moi lan in ton
+  // them stack ngay luc nhay cam nhat, de gay va cham heap/stack). Tao xong
+  // ca 3 task ROI MOI in ket qua gon 1 lan. =====
+  BaseType_t ok1 = xTaskCreate(task_rs485, "RS485", RTOS_STACK_RS485, NULL, RTOS_PRIO_RS485, &g_hTaskRS485);
+  BaseType_t ok2 = xTaskCreate(task_rf, "RF", RTOS_STACK_RF, NULL, RTOS_PRIO_RF, &g_hTaskRF);
+  BaseType_t ok3 = xTaskCreate(task_cli, "CLI", RTOS_STACK_CLI, NULL, RTOS_PRIO_CLI, &g_hTaskCLI);
+
+  SerialDBG.print("TASK CREATE: RS485=");
+  SerialDBG.print(ok1 == pdPASS ? "OK" : "FAIL");
+  SerialDBG.print(" RF=");
+  SerialDBG.print(ok2 == pdPASS ? "OK" : "FAIL");
+  SerialDBG.print(" CLI=");
+  SerialDBG.println(ok3 == pdPASS ? "OK" : "FAIL");
+  // ===== HET PHAN DEBUG =====
 
   vTaskStartScheduler();
 

@@ -45,8 +45,17 @@ typedef struct {
 // vTaskStartScheduler() khong bao gio chay toi dong lenh sau no, GIAM cac so
 // nay truoc khi tang configTOTAL_HEAP_SIZE (platformio.ini). Uu tien giam
 // RS485/RF truoc, CLI can nhieu stack hon vi dung sscanf/sprintf. -----
-#define RTOS_STACK_RS485 256 // 1024 byte
-#define RTOS_STACK_RF 256    // 1024 byte
+// 2026-07-03: giam RS485/RF tu 256 xuong 192 word - 2 task nay chi poll +
+// gui queue, khong dung sprintf/sscanf nhu CLI, 256 word du thua. Muc dich:
+// giai phong ~512 byte cho allocator (newlib malloc, xem heap_useNewlib_ST.c)
+// truoc khi tao task CLI - lan dau CLI bi tao "OK" gia (heap/stack va cham,
+// xPortGetFreeHeapSize() tra ve gia tri rac) vi allocator nay dung CON TRO
+// STACK HIEN TAI lam gioi han truoc vTaskStartScheduler(), khong phai 1 vung
+// heap co dinh - giam tong dung luong cap phat trong setup() la cach giam
+// rui ro va cham thuc te (khong dua duoc configTOTAL_HEAP_SIZE, macro nay
+// KHONG duoc allocator hien tai su dung - xem ghi chu trong platformio.ini).
+#define RTOS_STACK_RS485 192 // 768 byte
+#define RTOS_STACK_RF 192    // 768 byte
 #define RTOS_STACK_CLI 384   // 1536 byte (sscanf/sprintf trong hal.cpp ton stack hon)
 
 // Uu tien (so cang lon cang uu tien cao, tskIDLE_PRIORITY = 0). RS485 uu tien
