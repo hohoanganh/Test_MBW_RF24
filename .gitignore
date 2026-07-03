@@ -7,3 +7,53 @@ _reference/
 __pycache__/
 build/
 dist/
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# =========================
+# PyInstaller
+# =========================
+build/
+dist/
+*.spec.bak
+
+# =========================
+# PlatformIO
+# =========================
+.pio/
+.vscode/.browse.c_cpp.db*
+
+# =========================
+# VSCode
+# =========================
+.vscode/
+
+# =========================
+# Obsidian
+# =========================
+.obsidian/
+
+# =========================
+# Reference Documents
+# =========================
+_reference/
+
+# =========================
+# Generated files
+# =========================
+compile_commands.json
+*.log
+*.tmp
+
+# Windows
+Thumbs.db
+Desktop.ini
