@@ -44,6 +44,62 @@ static void task_rf(void *pvParameters) {
   }
 }
 
+// ===== CAP PHAT TINH cho 3 task (2026-07-03) - xem ghi chu chi tiet trong
+// platformio.ini / rtos_glue.cpp. Stack + TCB nam trong .bss, RAM co dinh
+// duoc linker kiem tra luc build, khong con phu thuoc con tro stack luc
+// runtime nua. =====
+static StaticTask_t s_tcbRS485, s_tcbRF, s_tcbCLI;
+static StackType_t s_stackRS485[RTOS_STACK_RS485];
+static StackType_t s_stackRF[RTOS_STACK_RF];
+static StackType_t s_stackCLI[RTOS_STACK_CLI];
+
+// Callback BAT BUOC phai co khi configSUPPORT_STATIC_ALLOCATION=1 (FreeRTOS
+// kernel tu goi de lay buffer cho Idle task noi bo, du ta khong tao Idle task
+// truc tiep). KHONG can vApplicationGetTimerTaskMemory vi configUSE_TIMERS=0
+// (khong tao Timer service task).
+extern "C" void vApplicationGetIdleTaskMemory(StaticTask_t **ppxIdleTaskTCBBuffer,
+                                               StackType_t **ppxIdleTaskStackBuffer,
+                                               uint32_t *pulIdleTaskStackSize) {
+  // configMINIMAL_STACK_SIZE cua STM32duino tinh tu linker symbol
+  // (_Min_Stack_Size) nen KHONG phai hang so compile-time -> dung size co dinh.
+  enum { IDLE_STACK_WORDS = 128 }; // 2026-07-03: tang lai 96->128 word khi
+                                   // debug treo (idle hook cua STM32duino GOI
+                                   // loop() moi vong - khong hoan toan "rong")
+  static StaticTask_t s_tcbIdle;
+  static StackType_t s_stackIdle[IDLE_STACK_WORDS];
+  *ppxIdleTaskTCBBuffer = &s_tcbIdle;
+  *ppxIdleTaskStackBuffer = s_stackIdle;
+  *pulIdleTaskStackSize = IDLE_STACK_WORDS;
+}
+
+// ===== Hook bao TRAN STACK (configCHECK_FOR_STACK_OVERFLOW=2, xem
+// STM32FreeRTOSConfig.h). Duoc kernel goi ngay khi phat hien pattern cuoi
+// stack bi ghi de luc chuyen context. KHONG in duoc qua SerialDBG o day
+// (hook chay trong ngu canh ngat, TX interrupt-driven se deadlock) -> bao
+// bang LED_LIFE: nhay N xung ngan roi nghi dai, lap vo han:
+//   1 xung = RS485, 2 = RF, 3 = CLI, 4 = IDLE, 5 = khac
+extern "C" void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName) {
+  (void)xTask;
+  taskDISABLE_INTERRUPTS();
+  int n = 5;
+  if (pcTaskName) {
+    if (pcTaskName[0]=='R' && pcTaskName[1]=='S') n = 1;      // "RS485"
+    else if (pcTaskName[0]=='R' && pcTaskName[1]=='F') n = 2; // "RF"
+    else if (pcTaskName[0]=='C') n = 3;                       // "CLI"
+    else if (pcTaskName[0]=='I') n = 4;                       // "IDLE"
+  }
+  pinMode(LED_LIFE, OUTPUT);
+  for (;;) {
+    for (int i = 0; i < n; i++) {
+      digitalWrite(LED_LIFE, HIGH);
+      for (volatile uint32_t d = 0; d < 400000; d++) {}  // ~xung ngan
+      digitalWrite(LED_LIFE, LOW);
+      for (volatile uint32_t d = 0; d < 400000; d++) {}
+    }
+    for (volatile uint32_t d = 0; d < 3200000; d++) {}   // nghi dai giua chu ky
+  }
+}
+
 static void task_cli(void *pvParameters) {
   (void)pvParameters;
   for (;;) {
@@ -73,23 +129,18 @@ void setup() {
   uart_log("RTOS: 3 task (RS485/Bridge, RF, CLI+peripherals) - xem 'rtos stat'");
   uart_log("Type: help");
 
-  // ===== DEBUG: kiem tra xTaskCreate co that bai khong (allocator thuc te la
-  // newlib malloc - xem heap_useNewlib_ST.c - truoc vTaskStartScheduler() gioi
-  // han cap phat la CON TRO STACK HIEN TAI, khong phai 1 con so co dinh, nen
-  // KHONG duoc chen them lenh in xen giua 3 lan xTaskCreate (moi lan in ton
-  // them stack ngay luc nhay cam nhat, de gay va cham heap/stack). Tao xong
-  // ca 3 task ROI MOI in ket qua gon 1 lan. =====
-  BaseType_t ok1 = xTaskCreate(task_rs485, "RS485", RTOS_STACK_RS485, NULL, RTOS_PRIO_RS485, &g_hTaskRS485);
-  BaseType_t ok2 = xTaskCreate(task_rf, "RF", RTOS_STACK_RF, NULL, RTOS_PRIO_RF, &g_hTaskRF);
-  BaseType_t ok3 = xTaskCreate(task_cli, "CLI", RTOS_STACK_CLI, NULL, RTOS_PRIO_CLI, &g_hTaskCLI);
+  // xTaskCreateStatic tra ve NULL neu that bai (khong con phu thuoc heap dong
+  // luc setup() nua - xem ghi chu dau file).
+  g_hTaskRS485 = xTaskCreateStatic(task_rs485, "RS485", RTOS_STACK_RS485, NULL, RTOS_PRIO_RS485, s_stackRS485, &s_tcbRS485);
+  g_hTaskRF = xTaskCreateStatic(task_rf, "RF", RTOS_STACK_RF, NULL, RTOS_PRIO_RF, s_stackRF, &s_tcbRF);
+  g_hTaskCLI = xTaskCreateStatic(task_cli, "CLI", RTOS_STACK_CLI, NULL, RTOS_PRIO_CLI, s_stackCLI, &s_tcbCLI);
 
   SerialDBG.print("TASK CREATE: RS485=");
-  SerialDBG.print(ok1 == pdPASS ? "OK" : "FAIL");
+  SerialDBG.print(g_hTaskRS485 ? "OK" : "FAIL");
   SerialDBG.print(" RF=");
-  SerialDBG.print(ok2 == pdPASS ? "OK" : "FAIL");
+  SerialDBG.print(g_hTaskRF ? "OK" : "FAIL");
   SerialDBG.print(" CLI=");
-  SerialDBG.println(ok3 == pdPASS ? "OK" : "FAIL");
-  // ===== HET PHAN DEBUG =====
+  SerialDBG.println(g_hTaskCLI ? "OK" : "FAIL");
 
   vTaskStartScheduler();
 

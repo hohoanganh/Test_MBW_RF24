@@ -46,7 +46,7 @@ import collections
 from datetime import datetime
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 
 try:
     import serial
@@ -83,6 +83,25 @@ LINK_DOWN_RE = re.compile(r"^RF LINK: DOWN \(peer=(\d+), (\d+)ms")
 RF_STAT_RE = re.compile(
     r"RF_LINK=(UP|DOWN)\s+PEER=(\d+)\s+AGE_MS=(\d+)\s+LOSS_PROMILLE=(\d+)\s+"
     r"REDUND=(\d+)\s+HB_TX=(\d+)\s+HB_RX=(\d+)")
+# dong dem goi RF ("rf stat" in truoc dong RF_LINK=):
+RF_CNT_RE = re.compile(
+    r"RF_TX=(\d+)\s+RF_RX_OK=(\d+)\s+RF_RX_DUP=(\d+)\s+RF_RX_CRCERR=(\d+)\s+"
+    r"RF_RX_FRAGDROP=(\d+)")
+# dong "bridge stat" (dem khung forward + drop queue lien-task):
+BR_CNT_RE = re.compile(
+    r"BRIDGE=(?:ON|OFF)\s+LOG=(?:ON|OFF)\s+RS485_TO_RF=(\d+)\s+RF_TO_RS485=(\d+)\s+"
+    r"DROP_RS485_TO_RF=(\d+)\s+DROP_RF_TO_RS485=(\d+)")
+
+
+def modbus_crc16(data):
+    """CRC16 Modbus RTU (poly 0xA001, init 0xFFFF). Tinh tren CA KHUNG (gom
+    2 byte CRC cuoi) -> khung dung tra ve 0."""
+    crc = 0xFFFF
+    for b in data:
+        crc ^= b
+        for _ in range(8):
+            crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
+    return crc
 
 
 def load_config():
@@ -281,15 +300,21 @@ class MbwTestApp:
             row=0, column=0, columnspan=5, sticky="w", padx=10, pady=(8, 2))
 
         self.port_var = tk.StringVar()
-        combo = ttk.Combobox(card, textvariable=self.port_var, width=16, state="readonly")
+        # rong 42 ky tu + kem MO TA thiet bi (USB-SERIAL CH340...) de chon
+        # dung cong khi may co nhieu COM
+        combo = ttk.Combobox(card, textvariable=self.port_var, width=42, state="readonly")
         combo.grid(row=1, column=0, padx=(10, 4), pady=(0, 10))
         self.combo = combo
 
         def refresh():
-            ports = [p.device for p in list_ports.comports()] if list_ports else []
-            combo["values"] = ports
-            if ports and not self.port_var.get():
-                self.port_var.set(ports[0])
+            items = []
+            if list_ports:
+                for p in list_ports.comports():
+                    desc = (p.description or "").strip()
+                    items.append("%s - %s" % (p.device, desc) if desc else p.device)
+            combo["values"] = items
+            if items and not self.port_var.get():
+                self.port_var.set(items[0])
 
         refresh()
         sec_btn(card, "↻", command=refresh, width=3).grid(row=1, column=1, pady=(0, 10))
@@ -301,6 +326,11 @@ class MbwTestApp:
         self.conn_btn.grid(row=1, column=3, padx=10, pady=(0, 10))
 
         card.grid_columnconfigure(4, weight=1)
+        # Nut mo cong cu Modbus Master that - dat o thanh ket noi (truoc day
+        # o tab Forward bi cac o so day ra ngoai man hinh)
+        flat_btn(card, "🔌 Modbus Poll Test (RS485 thật)", PRIMARY, PRIMARY_HOV,
+                 command=self._open_modbus_poll).grid(row=1, column=5, padx=10,
+                                                      pady=(0, 10), sticky="e")
 
     def _toggle_conn(self):
         if self.link.is_open():
@@ -311,7 +341,8 @@ class MbwTestApp:
                 self.lbl_rf_link.config(text="● Chưa rõ", fg=DIS_FG)
                 self.lbl_rf_link_detail.config(text="")
             return
-        port = self.port_var.get()
+        # combo hien "COM9 - USB-SERIAL CH340" -> lay phan ten cong truoc " - "
+        port = self.port_var.get().split(" - ")[0].strip()
         if not port:
             messagebox.showwarning(APP_TITLE, "Chưa chọn cổng COM")
             return
@@ -366,13 +397,18 @@ class MbwTestApp:
 
         self.tab_fwd = tk.Frame(nb, bg=MAIN_BG)
         self.tab_test = tk.Frame(nb, bg=MAIN_BG)
+        self.tab_stress = tk.Frame(nb, bg=MAIN_BG)
         self.tab_term = tk.Frame(nb, bg=MAIN_BG)
+        # Thu tu tab theo tan suat su dung khi LAP DAT/van hanh: giam sat +
+        # danh gia RF truoc, Factory Test (chi dung o xuong) de sau cung.
         nb.add(self.tab_fwd, text="  Giám sát Forward  ")
-        nb.add(self.tab_test, text="  Test tự động  ")
+        nb.add(self.tab_stress, text="  Stress Test  ")
         nb.add(self.tab_term, text="  Terminal  ")
+        nb.add(self.tab_test, text="  Factory Test  ")
 
         self._build_forward_tab(self.tab_fwd)
         self._build_test_tab(self.tab_test)
+        self._build_stress_tab(self.tab_stress)
         self._build_terminal_tab(self.tab_term)
 
     # ---------- TAB: GIAM SAT FORWARD ----------
@@ -390,27 +426,59 @@ class MbwTestApp:
         sec_btn(top, "Đọc thống kê (bridge stat)", command=self._refresh_bridge_stat).pack(
             side="left", padx=6)
 
+        # width co dinh + anchor trai: so thay doi khong lam xo day ca hang
         self.lbl_stat = tk.Label(top, text="RS485→RF: 0    RF→RS485: 0", bg=MAIN_BG, fg=INK,
-                                  font=FONT_B)
-        self.lbl_stat.pack(side="left", padx=16)
+                                  font=FONT_B, width=32, anchor="w")
+        self.lbl_stat.pack(side="left", padx=(16, 0))
 
-        # --- cong cu Modbus Master that (poll qua cong RS485 vat ly, khong
-        # phai console CLI) - phep test thuc te nhat cho chuc nang bridge ---
-        flat_btn(top, "🔌 Modbus Poll Test (RS485 thật)", PRIMARY, PRIMARY_HOV,
-                  command=self._open_modbus_poll).pack(side="right", padx=6)
+        # Hieu so 2 chieu quy ra % LOI GIAO DICH (request khong co response):
+        # tong tu luc mo app + rieng 60 giay gan nhat (phan anh "hien tai").
+        # Nguong danh gia: <=1%% xanh (TOT) / 1-2%% vang (CHAP NHAN) / >2%% do (KEM).
+        self.lbl_err = tk.Label(top, text="LỖI: --", bg=MAIN_BG, fg=DIS_FG,
+                                 font=("Segoe UI", 12, "bold"), width=34, anchor="w")
+        self.lbl_err.pack(side="left", padx=(4, 0))
+        self._fwd_hist = collections.deque(maxlen=1200)  # (t, dem RS485->RF, dem RF->RS485)
 
-        # --- RF LINK QUALITY: giong dong ho "link/telemetry" - board tu gui
-        # heartbeat dinh ky, app doc "rf stat" de hien UP/DOWN + % mat + do
-        # du phong (redundant TX) dang tu dieu chinh (xem rf_link.cpp) ---
-        link_row = tk.Frame(parent, bg=MAIN_BG)
-        link_row.pack(fill="x", pady=(0, 4))
-        tk.Label(link_row, text="RF Link:", bg=MAIN_BG, fg=INK, font=FONT_SM).pack(side="left")
-        self.lbl_rf_link = tk.Label(link_row, text="● Chưa rõ", bg=MAIN_BG, fg=DIS_FG, font=FONT_B)
-        self.lbl_rf_link.pack(side="left", padx=(6, 16))
-        self.lbl_rf_link_detail = tk.Label(link_row, text="", bg=MAIN_BG, fg=SEC_TX, font=FONT_SM)
+        # (nut "Modbus Poll Test" da chuyen len thanh "Ket noi board" - truoc
+        # day dat o day bi cac o so width co dinh day ra ngoai man hinh)
+
+        # --- PANEL CHAT LUONG RF (dung khi LAP DAT): 5 o KPI lon, mau theo
+        # nguong de tho lap dat nhin 1 giay biet dat/khong. LUU Y: nRF24L01
+        # KHONG co RSSI (chi co bit RPD >-64dBm, gan nhu vo dung de danh gia)
+        # -> danh gia bang TI LE MAT heartbeat + MUC DU PHONG tu dong (REDUND)
+        # - trung thuc hon RSSI vi do truc tiep "gui co toi noi khong". ---
+        qcard = tk.Frame(parent, bg=WHITE, highlightbackground=CARD_BD, highlightthickness=1)
+        qcard.pack(fill="x", pady=(0, 6))
+        qrow = tk.Frame(qcard, bg=WHITE)
+        qrow.pack(fill="x", padx=10, pady=(6, 8))
+
+        FONT_KPI = ("Segoe UI", 13, "bold")
+
+        def _kpi(col, caption, w):
+            # width CO DINH (don vi ky tu) de gia tri thay doi khong lam xo
+            # day cac o ben canh
+            f = tk.Frame(qrow, bg=WHITE)
+            f.grid(row=0, column=col, sticky="w", padx=(0, 8))
+            tk.Label(f, text=caption, bg=WHITE, fg=SEC_TX, font=FONT_SM,
+                     width=w, anchor="w").pack(anchor="w")
+            v = tk.Label(f, text="--", bg=WHITE, fg=DIS_FG, font=FONT_KPI,
+                         width=w, anchor="w")
+            v.pack(anchor="w")
+            return v
+
+        self.lbl_rf_link = _kpi(0, "RF LINK", 15)
+        self.lbl_q_loss = _kpi(1, "Mất gói (heartbeat)", 15)
+        self.lbl_q_redund = _kpi(2, "Dự phòng (tự động)", 14)
+        self.lbl_q_hb = _kpi(3, "Heartbeat TX / RX", 13)
+        self.lbl_q_rate = _kpi(4, "ĐÁNH GIÁ LẮP ĐẶT", 18)
+
+        qbot = tk.Frame(qcard, bg=WHITE)
+        qbot.pack(fill="x", padx=10, pady=(0, 6))
+        self.lbl_rf_link_detail = tk.Label(
+            qbot, text="(nRF24L01 không có RSSI - đánh giá theo % mất heartbeat + mức dự phòng)",
+            bg=WHITE, fg=SEC_TX, font=FONT_SM)
         self.lbl_rf_link_detail.pack(side="left")
-        sec_btn(link_row, "Đọc RF Link (rf stat)", command=self._refresh_rf_link_stat).pack(
-            side="left", padx=8)
+        sec_btn(qbot, "Đọc ngay (rf stat)", command=self._refresh_rf_link_stat).pack(side="right")
 
         # --- gui thu RS485 de tu kiem tra forward khi chua co Modbus that ---
         send_row = tk.Frame(parent, bg=MAIN_BG)
@@ -423,19 +491,55 @@ class MbwTestApp:
         flat_btn(send_row, "Gửi (rs485 <text>)", PRIMARY, PRIMARY_HOV,
                   command=self._send_rs485_test).pack(side="left")
 
-        cols = ("time", "dir", "len", "preview")
+        # dong tong hop KET QUA KIEM TRA KHUNG (CRC16 + exception Modbus)
+        chk_row = tk.Frame(parent, bg=MAIN_BG)
+        chk_row.pack(fill="x", pady=(0, 2))
+        tk.Label(chk_row, text="Kiểm tra khung Modbus:", bg=MAIN_BG, fg=INK,
+                 font=FONT_SM).pack(side="left")
+        # nguong do dai TUY CHINH: khung < "Ngan" hoac > "Dai" bi coi la LOI
+        # (VD manh vo "02 00 44" 3 byte tach ra tu response bi mat dau).
+        # Modbus RTU hop le: exception = 5B, request FC3 = 8B, toi da 256B.
+        tk.Label(chk_row, text="Ngắn <", bg=MAIN_BG, fg=SEC_TX, font=FONT_SM).pack(side="left", padx=(12, 2))
+        self.ent_chk_min = tk.Entry(chk_row, width=4, font=FONT_SM, justify="center")
+        self.ent_chk_min.insert(0, str(self.cfg.get("chk_min_len", 5)))
+        self.ent_chk_min.pack(side="left")
+        tk.Label(chk_row, text="byte, Dài >", bg=MAIN_BG, fg=SEC_TX, font=FONT_SM).pack(side="left", padx=2)
+        self.ent_chk_max = tk.Entry(chk_row, width=5, font=FONT_SM, justify="center")
+        self.ent_chk_max.insert(0, str(self.cfg.get("chk_max_len", 256)))
+        self.ent_chk_max.pack(side="left")
+        tk.Label(chk_row, text="byte", bg=MAIN_BG, fg=SEC_TX, font=FONT_SM).pack(side="left", padx=(2, 8))
+        self.lbl_chk = tk.Label(chk_row, text="(chưa có khung)", bg=MAIN_BG, fg=DIS_FG,
+                                 font=FONT_B, width=58, anchor="w")
+        self.lbl_chk.pack(side="left", padx=6)
+        self.chk_counts = {}
+
+        # --- ghi log Excel: moi khung forward 1 dong (gio, huong, so byte,
+        # ket qua kiem tra, hex). Ghi theo LO moi 5s de khong gia GUI khi
+        # traffic cao (openpyxl luu lai ca file moi lan save). Nut dat o hang
+        # "Gui thu RS485" (send_row) vi hang kiem tra khung da chat cho. ---
+        self._xlog_on = False
+        self.btn_xlog = sec_btn(send_row, "⏺ Ghi Excel", command=self._fwd_log_toggle)
+        self.btn_xlog.pack(side="right", padx=(0, 4))
+        self.lbl_xlog = tk.Label(send_row, text="", bg=MAIN_BG, fg=SEC_TX,
+                                  font=FONT_SM, width=30, anchor="e")
+        self.lbl_xlog.pack(side="right", padx=6)
+
+        cols = ("time", "dir", "len", "check", "preview")
         self.fwd_tree = ttk.Treeview(parent, columns=cols, show="headings", height=14)
         self.fwd_tree.heading("time", text="Giờ")
         self.fwd_tree.heading("dir", text="Hướng")
         self.fwd_tree.heading("len", text="Số byte")
+        self.fwd_tree.heading("check", text="Kiểm tra")
         self.fwd_tree.heading("preview", text="Preview (hex)")
-        self.fwd_tree.column("time", width=90, anchor="center")
-        self.fwd_tree.column("dir", width=120, anchor="center")
-        self.fwd_tree.column("len", width=70, anchor="center")
-        self.fwd_tree.column("preview", width=560)
+        self.fwd_tree.column("time", width=85, anchor="center")
+        self.fwd_tree.column("dir", width=110, anchor="center")
+        self.fwd_tree.column("len", width=60, anchor="center")
+        self.fwd_tree.column("check", width=95, anchor="center")
+        self.fwd_tree.column("preview", width=480)
         self.fwd_tree.pack(fill="both", expand=True, pady=(0, 6))
         self.fwd_tree.tag_configure("rs485_rf", foreground=PRIMARY)
         self.fwd_tree.tag_configure("rf_rs485", foreground=WARN_FG)
+        self.fwd_tree.tag_configure("bad", foreground=FAIL_FG)  # khung loi: chu do
 
         tk.Label(parent, text="Console thô (mọi dòng board in ra):", bg=MAIN_BG, fg=INK,
                  font=FONT_SM).pack(anchor="w")
@@ -443,14 +547,215 @@ class MbwTestApp:
                                 insertbackground=WHITE)
         self.raw_log.pack(fill="x")
 
+    def _chk_limits(self):
+        """Nguong do dai khung tu 2 o nhap (tuy chinh duoc khi dang chay)."""
+        try:
+            lo = int(self.ent_chk_min.get())
+        except (ValueError, AttributeError):
+            lo = 5
+        try:
+            hi = int(self.ent_chk_max.get())
+        except (ValueError, AttributeError):
+            hi = 256
+        return max(1, lo), max(lo, hi)
+
+    def _analyze_fwd_frame(self, length, preview):
+        """Kiem tra 1 khung tu dong FWD: do dai (nguong tuy chinh) + CRC16 +
+        exception Modbus. Tra ve (nhan hien thi, True neu la khung LOI).
+        Gioi han: firmware chi in toi da 16 byte dau (FWD_PREVIEW_MAX) - khung
+        dai hon nguong nay khong du du lieu tinh CRC -> '(>16B)', bo qua."""
+        lo, hi = self._chk_limits()
+        if length < lo:   # manh vo kieu "02 00 44" (response mat dau)
+            return "NGẮN %dB" % length, True
+        if length > hi:   # dai bat thuong (dinh khung / rac bus)
+            return "QUÁ DÀI %dB" % length, True
+        if "..." in preview:
+            return "(>16B)", False
+        try:
+            data = bytes(int(x, 16) for x in preview.split())
+        except ValueError:
+            return "?", False
+        if len(data) != length:
+            return "(>16B)", False
+        if modbus_crc16(data) != 0:
+            return "CRC LỖI", True
+        if data[1] & 0x80:  # slave tra loi exception (FC | 0x80, byte 3 = ma loi)
+            return "EXC %02X" % data[2], True
+        return "OK", False
+
     def _add_fwd_row(self, direction, length, preview):
         self.fwd_count[direction] = self.fwd_count.get(direction, 0) + 1
         tag = "rs485_rf" if direction == "RS485->RF" else "rf_rs485"
         arrow = "RS485 → RF" if direction == "RS485->RF" else "RF → RS485"
-        self.fwd_tree.insert("", 0, values=(datetime.now().strftime("%H:%M:%S"), arrow, length, preview),
-                              tags=(tag,))
-        self.lbl_stat.config(text="RS485→RF: %d    RF→RS485: %d" %
-                              (self.fwd_count.get("RS485->RF", 0), self.fwd_count.get("RF->RS485", 0)))
+
+        verdict, bad = self._analyze_fwd_frame(length, preview)
+        k = ("crc" if verdict.startswith("CRC") else
+             "exc" if verdict.startswith("EXC") else
+             "short" if verdict.startswith("NGẮN") else
+             "long" if verdict.startswith("QUÁ DÀI") else
+             "ok" if verdict == "OK" else "skip")
+        self.chk_counts[k] = self.chk_counts.get(k, 0) + 1
+        c = self.chk_counts
+        n_bad = (c.get("crc", 0) + c.get("exc", 0) + c.get("short", 0) +
+                 c.get("long", 0))
+        self.lbl_chk.config(
+            text="OK %d  |  CRC lỗi %d  |  Exception %d  |  ngắn %d  |  quá dài %d  |  bỏ qua (>16B) %d" %
+                 (c.get("ok", 0), c.get("crc", 0), c.get("exc", 0),
+                  c.get("short", 0), c.get("long", 0), c.get("skip", 0)),
+            fg=FAIL_FG if n_bad else PASS_FG)
+
+        now = datetime.now()
+        self.fwd_tree.insert("", 0, values=(now.strftime("%H:%M:%S"), arrow, length,
+                                            verdict, preview),
+                              tags=(("bad",) if bad else (tag,)))
+        if self._xlog_on:
+            self._xlog_buf.append((now.strftime("%d/%m/%Y"),
+                                   now.strftime("%H:%M:%S.%f")[:-3],
+                                   arrow, length, verdict, preview))
+        a = self.fwd_count.get("RS485->RF", 0)
+        b = self.fwd_count.get("RF->RS485", 0)
+        self.lbl_stat.config(text="RS485→RF: %d    RF→RS485: %d" % (a, b))
+        self._update_err_label(a, b)
+
+    def _update_err_label(self, a, b):
+        """% loi giao dich = |hieu so 2 chieu| / chieu lon hon. Hien ca TONG
+        (tu luc mo app) va 60S GAN NHAT - so 60s moi phan anh chat luong
+        HIEN TAI (tong bi "keo" boi qua khu). Mau theo so 60s neu co, khong
+        thi theo tong."""
+        now = time.time()
+        self._fwd_hist.append((now, a, b))
+        total = max(a, b)
+        err_cum = (abs(a - b) / total * 100.0) if total > 0 else 0.0
+
+        # cua so 60 giay gan nhat
+        err_60 = None
+        for (t0, a0, b0) in self._fwd_hist:
+            if now - t0 <= 60.0:
+                da, db = a - a0, b - b0
+                dmax = max(da, db)
+                if dmax >= 20:  # du mau moi tinh, tranh nhieu thong ke
+                    err_60 = abs(da - db) / dmax * 100.0
+                break
+
+        self._last_err = (err_cum, err_60)  # cho log Excel dinh ky
+        basis = err_60 if err_60 is not None else err_cum
+        fg = PASS_FG if basis <= 1.0 else (WARN_FG if basis <= 2.0 else FAIL_FG)
+        rate = "TỐT" if basis <= 1.0 else ("CHẤP NHẬN" if basis <= 2.0 else "KÉM")
+        if err_60 is not None:
+            txt = "LỖI: %.1f%% (60s: %.1f%%) - %s" % (err_cum, err_60, rate)
+        else:
+            txt = "LỖI: %.1f%% - %s" % (err_cum, rate)
+        self.lbl_err.config(text=txt, fg=fg)
+
+    # ---------- GHI LOG FORWARD RA EXCEL ----------
+    def _fwd_log_toggle(self):
+        if self._xlog_on:
+            self._xlog_on = False
+            self._fwd_log_flush(final=True)
+            self.btn_xlog.config(text="⏺ Ghi Excel")
+            return
+        use_xlsx = openpyxl is not None
+        default_name = "fwd_log_%s.%s" % (datetime.now().strftime("%Y%m%d_%H%M%S"),
+                                          "xlsx" if use_xlsx else "csv")
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx" if use_xlsx else ".csv",
+            filetypes=[("Excel", "*.xlsx"), ("CSV", "*.csv")],
+            initialfile=default_name)
+        if not path:
+            return
+        header = ("Ngày", "Giờ", "Hướng", "Số byte", "Kiểm tra", "Hex")
+        # sheet 2: snapshot TOAN BO chi so tab Forward moi 5s - de truy vet
+        # mat frame/mat goi theo thoi gian (doi chieu voi sheet khung & log
+        # Modbus Poll bang timestamp)
+        header2 = ("Ngày", "Giờ", "RS485→RF", "RF→RS485", "Hiệu số",
+                   "Lỗi tổng %", "Lỗi 60s %", "RF LINK", "Mất gói %",
+                   "Dự phòng", "HB_TX", "HB_RX",
+                   "OK", "CRC lỗi", "Exception", "Ngắn", "Quá dài", "Bỏ qua >16B")
+        self._xlog_csv = path.lower().endswith(".csv") or not use_xlsx
+        if self._xlog_csv and not path.lower().endswith(".csv"):
+            path = path.rsplit(".", 1)[0] + ".csv"
+            messagebox.showinfo(APP_TITLE, "Thiếu openpyxl - ghi CSV thay thế:\n%s" % path)
+        try:
+            if self._xlog_csv:
+                with open(path, "w", encoding="utf-8-sig") as f:
+                    f.write(",".join(header) + "\n")
+                self._xlog_path2 = path.rsplit(".", 1)[0] + "_link.csv"
+                with open(self._xlog_path2, "w", encoding="utf-8-sig") as f:
+                    f.write(",".join(header2) + "\n")
+            else:
+                wb = openpyxl.Workbook()
+                ws = wb.active
+                ws.title = "FWD log"
+                ws.append(header)
+                ws2 = wb.create_sheet("Link 5s")
+                ws2.append(header2)
+                wb.save(path)
+                self._xlog_wb, self._xlog_ws, self._xlog_ws2 = wb, ws, ws2
+        except PermissionError:
+            messagebox.showerror(APP_TITLE, "Không ghi được file (đang mở trong Excel?)")
+            return
+        self._xlog_path = path
+        self._xlog_buf = []
+        self._xlog_rows = 0
+        self._xlog_on = True
+        self.btn_xlog.config(text="⏹ Dừng ghi")
+        self.lbl_xlog.config(text="%s | 0 dòng" % os.path.basename(path))
+        self.root.after(5000, self._fwd_log_tick)
+
+    def _fwd_log_tick(self):
+        if not self._xlog_on:
+            return
+        self._fwd_log_flush()
+        self.root.after(5000, self._fwd_log_tick)
+
+    def _link_snapshot_row(self):
+        """1 dong tong hop TOAN BO chi so tab Forward tai thoi diem hien tai."""
+        now = datetime.now()
+        a = self.fwd_count.get("RS485->RF", 0)
+        b = self.fwd_count.get("RF->RS485", 0)
+        err_cum, err_60 = getattr(self, "_last_err", (0.0, None))
+        rf = getattr(self, "_last_rf", None)
+        c = self.chk_counts
+        return (now.strftime("%d/%m/%Y"), now.strftime("%H:%M:%S.%f")[:-3],
+                a, b, abs(a - b),
+                "%.2f" % err_cum,
+                ("%.2f" % err_60) if err_60 is not None else "",
+                (("UP" if rf["up"] else "DOWN") if rf else ""),
+                ("%.1f" % rf["loss_pct"]) if rf else "",
+                rf["redund"] if rf else "", rf["hb_tx"] if rf else "",
+                rf["hb_rx"] if rf else "",
+                c.get("ok", 0), c.get("crc", 0), c.get("exc", 0),
+                c.get("short", 0), c.get("long", 0), c.get("skip", 0))
+
+    def _fwd_log_flush(self, final=False):
+        buf = getattr(self, "_xlog_buf", [])
+        snap = self._link_snapshot_row()
+        if buf or snap:
+            self._xlog_buf = []
+            try:
+                if self._xlog_csv:
+                    if buf:
+                        with open(self._xlog_path, "a", encoding="utf-8-sig") as f:
+                            for r in buf:
+                                f.write(",".join(str(x) for x in r) + "\n")
+                    with open(self._xlog_path2, "a", encoding="utf-8-sig") as f:
+                        f.write(",".join(str(x) for x in snap) + "\n")
+                else:
+                    for r in buf:
+                        self._xlog_ws.append(r)
+                    self._xlog_ws2.append(snap)
+                    self._xlog_wb.save(self._xlog_path)
+                self._xlog_rows += len(buf)
+            except PermissionError:
+                # file dang mo trong Excel - giu lai buffer, thu lai lan sau
+                self._xlog_buf = buf + self._xlog_buf
+                self.lbl_xlog.config(text="LỖI: file đang mở trong Excel!", fg=FAIL_FG)
+                return
+        self.lbl_xlog.config(
+            text="%s | %d dòng%s" % (os.path.basename(self._xlog_path),
+                                     self._xlog_rows,
+                                     " (đã dừng)" if final else ""),
+            fg=SEC_TX)
 
     def _require_conn(self):
         if not self.link.is_open():
@@ -492,25 +797,66 @@ class MbwTestApp:
 
     # ---------- RF LINK QUALITY (heartbeat, giong dong ho telemetry) ----------
     def _refresh_rf_link_stat(self):
-        if not self.link.is_open():
+        """Doc 'rf stat' o THREAD NEN roi cap nhat KPI qua after(). Truoc day
+        doc ngay tren GUI thread voi timeout 1s: (1) GUI dong bang moi lan
+        doi, (2) khi Modbus chay console ngap dong FWD lam phan hoi tre >1s
+        -> KPI mai la '--'."""
+        if not self.link.is_open() or getattr(self, "_rf_q_busy", False):
             return
-        self.link.send("rf stat")
-        line = self.link.wait_for("RF_LINK=", 1.0)
+        self._rf_q_busy = True
+        threading.Thread(target=self._rf_link_query_worker, daemon=True).start()
+
+    def _rf_link_query_worker(self):
+        try:
+            self.link.send("rf stat")
+            line = self.link.wait_for("RF_LINK=", 2.5)
+        finally:
+            self._rf_q_busy = False
         if not line:
             return
+        self.root.after(0, self._rf_link_apply_stat, line)
+
+    def _rf_link_apply_stat(self, line):
         m = RF_STAT_RE.search(line)
         if not m:
             return
-        up, peer, age_ms, loss_pm, redund, hb_tx, hb_rx = m.groups()
-        self._apply_link_ui(up == "UP", peer)
+        up_s, peer, age_ms, loss_pm, redund_s, hb_tx, hb_rx = m.groups()
+        up = up_s == "UP"
         loss_pct = int(loss_pm) / 10.0  # phan nghin -> %
+        redund = int(redund_s)
+        # luu snapshot cho log Excel dinh ky (sheet "Link 5s")
+        self._last_rf = dict(up=up, peer=peer, age_ms=age_ms, loss_pct=loss_pct,
+                             redund=redund, hb_tx=hb_tx, hb_rx=hb_rx)
+
+        self._apply_link_ui(up, peer)
+
+        # Mat goi: <2%% xanh (TOT) / 2-10%% vang (KHA) / >10%% do (KEM)
+        loss_fg = PASS_FG if loss_pct < 2 else (WARN_FG if loss_pct < 10 else FAIL_FG)
+        self.lbl_q_loss.config(text="%.1f %%" % loss_pct, fg=loss_fg if up else DIS_FG)
+
+        # Du phong dang phai dung: 2-3 binh thuong / 4-5 dang gong / 6+ te
+        red_fg = PASS_FG if redund <= 3 else (WARN_FG if redund <= 5 else FAIL_FG)
+        self.lbl_q_redund.config(text="%dx" % redund, fg=red_fg if up else DIS_FG)
+
+        self.lbl_q_hb.config(text="%s / %s" % (hb_tx, hb_rx), fg=INK if up else DIS_FG)
+
+        if not up:
+            rate, rate_fg = "MẤT LINK", FAIL_FG
+        elif loss_pct < 2 and redund <= 3:
+            rate, rate_fg = "TỐT", PASS_FG
+        elif loss_pct < 10 and redund <= 5:
+            rate, rate_fg = "KHÁ", WARN_FG
+        else:
+            rate, rate_fg = "KÉM", FAIL_FG
+        self.lbl_q_rate.config(text=rate, fg=rate_fg)
+
         self.lbl_rf_link_detail.config(
-            text="peer=%s | mất ~%.1f%% | dự phòng=%sx | HB tx/rx=%s/%s | %sms trước" %
-                 (peer, loss_pct, redund, hb_tx, hb_rx, age_ms))
+            text="peer=%s | gói heartbeat cuối %sms trước | ngưỡng: TỐT <2%% mất & dự phòng ≤3x, "
+                 "KHÁ <10%% & ≤5x, còn lại KÉM (nRF24L01 không có RSSI)" % (peer, age_ms))
 
     def _apply_link_ui(self, up, peer):
         self.lbl_rf_link.config(
-            text="● LINK UP (peer=%s)" % peer if up else "● LINK DOWN",
+            text="● UP (peer=%s)" % peer if up else "● DOWN",
             fg=PASS_FG if up else FAIL_FG)
 
     def _schedule_rf_link_poll(self):
@@ -604,6 +950,13 @@ class MbwTestApp:
         self.progress["value"] = 0
         pass_count = 0
 
+        # TAT log forward trong luc chay test: neu Modbus dang chay qua bridge,
+        # console bi ngap dong "FWD ..." lam phan hoi lenh CLI tre/chim -> moi
+        # buoc deu FAIL oan mac du board van tot. Xong chuoi test se BAT lai.
+        self.link.send("bridge log off")
+        time.sleep(0.5)
+        self._log("(đã tạm tắt log FWD trong lúc test - sẽ bật lại khi xong)")
+
         for g in groups:
             key = g["key"]
             self._set_row(key, "RUN")
@@ -614,7 +967,14 @@ class MbwTestApp:
                 self._log("  (*) Yêu cầu: %s" % prereq)
 
             try:
-                ok, detail = self.link.cmd_and_wait(g["cmd"], g.get("expect_contains"))
+                check = g.get("check")
+                if check in ("rf_hb", "rf_loss"):
+                    # Buoc test RF link can PARSE SO LIEU (khong chi tim chuoi):
+                    # heartbeat 2 chieu / ti le khung mat so voi nguong.
+                    ok, detail = self._test_rf_link_check(check, g)
+                else:
+                    ok, detail = self.link.cmd_and_wait(g["cmd"], g.get("expect_contains"),
+                                                        timeout_s=3.0)
             except Exception as e:
                 ok, detail = False, "Lỗi: %s" % e
 
@@ -624,10 +984,41 @@ class MbwTestApp:
                 pass_count += 1
             self.progress["value"] += 1
 
+        self.link.send("bridge log on")  # bat lai log FWD (da tat o dau chuoi test)
         self._log("Hoàn tất: %d/%d bước PASS" % (pass_count, len(groups)))
         self.test_running = False
         self._last_result_summary = (pass_count, len(groups))
         self._append_report_row()
+
+    def _test_rf_link_check(self, check, g):
+        """2 buoc Factory Test cho RF link (can board doi dien dang bat):
+          - rf_hb  : heartbeat 2 chieu - LINK=UP va HB_RX > 0 (nghe duoc peer).
+          - rf_loss: ti le khung mat LOSS_PROMILLE <= nguong (mac dinh 100‰).
+        Doc 'rf stat' va parse RF_STAT_RE (khong dung expect_contains vi phai
+        so sanh SO)."""
+        self.link.send("rf stat")
+        line = self.link.wait_for("RF_LINK=", 2.0)
+        if not line:
+            return False, "Không đọc được rf stat"
+        m = RF_STAT_RE.search(line)
+        if not m:
+            return False, "Không parse được: %s" % line
+        up = m.group(1) == "UP"
+        peer, age = m.group(2), m.group(3)
+        loss, redund = int(m.group(4)), m.group(5)
+        hb_tx, hb_rx = int(m.group(6)), int(m.group(7))
+        if check == "rf_hb":
+            ok = up and hb_rx > 0
+            detail = "LINK=%s PEER=%s HB tx/rx=%d/%d (%sms trước)" % (
+                "UP" if up else "DOWN", peer, hb_tx, hb_rx, age)
+            return ok, detail
+        # rf_loss
+        loss_max = int(g.get("loss_max_promille", 100))
+        ok = up and loss <= loss_max
+        detail = "LOSS=%d‰ (ngưỡng ≤%d‰) REDUND=%sx" % (loss, loss_max, redund)
+        if not up:
+            detail = "LINK DOWN - " + detail
+        return ok, detail
 
     def _append_report_row(self):
         pass_count, total = getattr(self, "_last_result_summary", (0, 0))
@@ -668,6 +1059,266 @@ class MbwTestApp:
         self._append_report_row()
 
     # ---------- TAB: TERMINAL ----------
+    # ---------- TAB: STRESS TEST RF LINK ----------
+    # Muc dich: danh gia DO ON DINH link RF de forward Modbus RS485. Cach lam:
+    #   - Bom khung "rf tx" (data that qua RF, co ACK/redundant nhu khung
+    #     forward) hoac "rs485" (ra bus RS485 vat ly) theo chu ky cai duoc.
+    #   - Dinh ky doc "rf stat" + "bridge stat", tinh delta tung mau: LOSS,
+    #     REDUND, HB, CRC error, FRAGDROP, DROP queue.
+    #   - Ket thuc cham DAT/KHONG DAT theo nguong (xem _stress_verdict).
+    def _build_stress_tab(self, parent):
+        self.stress_running = False
+        self.stress_stop_evt = threading.Event()
+        self.stress_rows = []  # (t_s, link, loss, redund, d_hbtx, d_hbrx, d_crc, d_frag, d_drop, pump_ok, pump_fail)
+
+        # --- hang cau hinh ---
+        card = tk.Frame(parent, bg=WHITE, highlightbackground=CARD_BD, highlightthickness=1)
+        card.pack(fill="x", padx=10, pady=(10, 6))
+        row = tk.Frame(card, bg=WHITE)
+        row.pack(fill="x", padx=10, pady=(8, 2))
+
+        def _lbl(parent_, text):
+            tk.Label(parent_, text=text, bg=WHITE, fg=INK, font=FONT).pack(side="left")
+
+        def _ent(parent_, width, default):
+            e = tk.Entry(parent_, width=width, font=FONT, justify="center")
+            e.insert(0, default)
+            e.pack(side="left", padx=(4, 14))
+            return e
+
+        _lbl(row, "Thời lượng (phút, 0=chạy mãi):")
+        self.ent_st_dur = _ent(row, 5, "30")
+        _lbl(row, "Chu kỳ mẫu (s):")
+        self.ent_st_intv = _ent(row, 4, "5")
+        _lbl(row, "Bơm khung:")
+        self.cbo_st_pump = ttk.Combobox(row, state="readonly", width=20, font=FONT,
+                                        values=["Tắt (chỉ heartbeat)",
+                                                "rf tx (qua RF)",
+                                                "rs485 (ra bus RS485)"])
+        self.cbo_st_pump.current(1)
+        self.cbo_st_pump.pack(side="left", padx=(4, 14))
+        _lbl(row, "mỗi (ms):")
+        self.ent_st_pms = _ent(row, 5, "200")
+        _lbl(row, "size (byte, ≤63):")
+        self.ent_st_plen = _ent(row, 4, "32")
+
+        row2 = tk.Frame(card, bg=WHITE)
+        row2.pack(fill="x", padx=10, pady=(2, 8))
+        self.btn_st_start = flat_btn(row2, "▶ Bắt đầu", PRIMARY, PRIMARY_HOV,
+                                     command=self.stress_start)
+        self.btn_st_start.pack(side="left")
+        self.btn_st_stop = sec_btn(row2, "■ Dừng", command=self.stress_stop_click,
+                                   state="disabled")
+        self.btn_st_stop.pack(side="left", padx=8)
+        sec_btn(row2, "Xuất CSV", command=self.stress_export_csv).pack(side="left")
+        self.lbl_st_verdict = tk.Label(row2, text="", bg=WHITE, font=FONT_CARD)
+        self.lbl_st_verdict.pack(side="right", padx=6)
+
+        # --- so lieu song (live) ---
+        card2 = tk.Frame(parent, bg=WHITE, highlightbackground=CARD_BD, highlightthickness=1)
+        card2.pack(fill="x", padx=10, pady=(0, 6))
+        self.lbl_st_live = tk.Label(card2, text="(chưa chạy)", bg=WHITE, fg=INK,
+                                    font=FONT_MONO, justify="left", anchor="w")
+        self.lbl_st_live.pack(fill="x", padx=10, pady=8)
+
+        # --- bang mau ---
+        wrap = tk.Frame(parent, bg=MAIN_BG)
+        wrap.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        cols = ("t", "link", "loss", "redund", "hbtx", "hbrx", "crc", "frag", "drop", "pok", "pfail")
+        heads = ("Giây", "Link", "LOSS‰", "REDUND", "ΔHB_TX", "ΔHB_RX", "ΔCRC", "ΔFRAG", "ΔDROP", "Bơm OK", "Bơm FAIL")
+        self.tree_st = ttk.Treeview(wrap, columns=cols, show="headings", height=9)
+        for c, h in zip(cols, heads):
+            self.tree_st.heading(c, text=h)
+            self.tree_st.column(c, width=70, anchor="center")
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=self.tree_st.yview)
+        self.tree_st.configure(yscrollcommand=sb.set)
+        self.tree_st.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+
+    def _stress_query(self):
+        """Doc 1 bo so lieu tu board: 'rf stat' (2 dong) + 'bridge stat'.
+        Tra ve dict hoac None neu khong doc duoc (timeout/mat ket noi)."""
+        if not self.link.is_open():
+            return None
+        idx = self.link.snapshot_len()
+        self.link.send("rf stat")
+        line = self.link.wait_for("RF_LINK=", 1.5)
+        if not line:
+            return None
+        m = RF_STAT_RE.search(line)
+        if not m:
+            return None
+        d = dict(up=(m.group(1) == "UP"), peer=int(m.group(2)),
+                 age=int(m.group(3)), loss=int(m.group(4)),
+                 redund=int(m.group(5)), hb_tx=int(m.group(6)),
+                 hb_rx=int(m.group(7)),
+                 crc=0, frag=0, dup=0, rf_tx=0, rx_ok=0, drop=0)
+        for ln in self.link.lines_since(idx):
+            mc = RF_CNT_RE.search(ln)
+            if mc:
+                d.update(rf_tx=int(mc.group(1)), rx_ok=int(mc.group(2)),
+                         dup=int(mc.group(3)), crc=int(mc.group(4)),
+                         frag=int(mc.group(5)))
+                break
+        idx2 = self.link.snapshot_len()
+        self.link.send("bridge stat")
+        lb = self.link.wait_for("BRIDGE=", 1.5)
+        if lb:
+            mb = BR_CNT_RE.search(lb)
+            if mb:
+                d["drop"] = int(mb.group(3)) + int(mb.group(4))
+        return d
+
+    def stress_start(self):
+        if not self._require_conn() or self.stress_running:
+            return
+        try:
+            dur_s = max(0, int(float(self.ent_st_dur.get() or "0") * 60))
+            intv_s = max(1.0, float(self.ent_st_intv.get() or "5"))
+            pump_ms = max(50, int(self.ent_st_pms.get() or "200"))
+            plen = min(63, max(8, int(self.ent_st_plen.get() or "32")))
+        except ValueError:
+            messagebox.showerror(APP_TITLE, "Tham số không hợp lệ.")
+            return
+        pump_mode = {0: None, 1: "rf", 2: "rs485"}[self.cbo_st_pump.current()]
+        self.stress_rows = []
+        for it in self.tree_st.get_children():
+            self.tree_st.delete(it)
+        self.lbl_st_verdict.config(text="ĐANG CHẠY...", fg=RUN_FG)
+        self.stress_stop_evt.clear()
+        self.stress_running = True
+        self.btn_st_start.config(state="disabled")
+        self.btn_st_stop.config(state="normal")
+        threading.Thread(target=self._stress_worker,
+                         args=(dur_s, intv_s, pump_mode, pump_ms, plen),
+                         daemon=True).start()
+
+    def stress_stop_click(self):
+        self.stress_stop_evt.set()
+
+    def _stress_worker(self, dur_s, intv_s, pump_mode, pump_ms, plen):
+        t0 = time.time()
+        base = self._stress_query()
+        if base is None:
+            self.root.after(0, lambda: self._stress_done(None, 0, [], 0, 0, "Không đọc được rf stat từ board"))
+            return
+        prev = dict(base)
+        was_up = base["up"]
+        down_cnt = 0
+        loss_list = []
+        pump_n = pump_ok = pump_fail = 0
+        mark = self.link.snapshot_len()
+        next_pump = time.time()
+        next_sample = time.time() + intv_s
+
+        while not self.stress_stop_evt.is_set() and self.link.is_open():
+            now = time.time()
+            if dur_s > 0 and (now - t0) >= dur_s:
+                break
+            if pump_mode and now >= next_pump:
+                payload = ("S%06d" % pump_n).ljust(plen, "A")[:63]
+                self.link.send(("rf tx %s" % payload) if pump_mode == "rf"
+                               else ("rs485 %s" % payload))
+                pump_n += 1
+                next_pump = now + pump_ms / 1000.0
+            if now >= next_sample:
+                d = self._stress_query()
+                next_sample = time.time() + intv_s
+                if d:
+                    for ln in self.link.lines_since(mark):
+                        if ln.startswith("RF_TX=OK"):
+                            pump_ok += 1
+                        elif ln.startswith("RF_TX=FAIL"):
+                            pump_fail += 1
+                    mark = self.link.snapshot_len()
+                    if was_up and not d["up"]:
+                        down_cnt += 1
+                    was_up = d["up"]
+                    loss_list.append(d["loss"])
+                    t_s = int(now - t0)
+                    row = (t_s, "UP" if d["up"] else "DOWN", d["loss"], d["redund"],
+                           max(0, d["hb_tx"] - prev["hb_tx"]),
+                           max(0, d["hb_rx"] - prev["hb_rx"]),
+                           max(0, d["crc"] - prev["crc"]),
+                           max(0, d["frag"] - prev["frag"]),
+                           max(0, d["drop"] - prev["drop"]),
+                           pump_ok, pump_fail)
+                    self.stress_rows.append(row)
+                    prev = dict(d)
+                    self.root.after(0, self._stress_gui_update, row, d, base,
+                                    down_cnt, loss_list[:], pump_n, pump_ok, pump_fail, t_s)
+            time.sleep(0.02)
+
+        d_end = prev
+        self.root.after(0, lambda: self._stress_done(
+            d_end, down_cnt, loss_list, pump_n, pump_fail,
+            None, base=base, pump_ok=pump_ok))
+
+    def _stress_gui_update(self, row, d, base, down_cnt, loss_list, pump_n,
+                           pump_ok, pump_fail, t_s):
+        self.tree_st.insert("", 0, values=row)
+        avg_loss = sum(loss_list) / max(1, len(loss_list))
+        self.lbl_st_live.config(text=(
+            "Mẫu: %d | %02d:%02d | LINK: %s | Lần rớt link: %d\n"
+            "LOSS‰ hiện/tb/max: %d / %.0f / %d | REDUND: %d\n"
+            "Tổng ΔCRC: %d | ΔFRAGDROP: %d | ΔDROP queue: %d | "
+            "Bơm: %d gửi / %d OK / %d FAIL"
+        ) % (len(loss_list), t_s // 60, t_s % 60,
+             "UP" if d["up"] else "DOWN", down_cnt,
+             d["loss"], avg_loss, max(loss_list), d["redund"],
+             max(0, d["crc"] - base["crc"]), max(0, d["frag"] - base["frag"]),
+             max(0, d["drop"] - base["drop"]), pump_n, pump_ok, pump_fail))
+
+    def _stress_done(self, d_end, down_cnt, loss_list, pump_n, pump_fail,
+                     err, base=None, pump_ok=0):
+        self.stress_running = False
+        self.btn_st_start.config(state="normal")
+        self.btn_st_stop.config(state="disabled")
+        if err or d_end is None or not loss_list:
+            self.lbl_st_verdict.config(text=err or "KHÔNG CÓ DỮ LIỆU", fg=FAIL_FG)
+            return
+        avg_loss = sum(loss_list) / len(loss_list)
+        max_loss = max(loss_list)
+        d_crc = max(0, d_end["crc"] - base["crc"])
+        d_frag = max(0, d_end["frag"] - base["frag"])
+        d_drop = max(0, d_end["drop"] - base["drop"])
+        reasons = []
+        if down_cnt > 0:
+            reasons.append("rớt link %d lần" % down_cnt)
+        if avg_loss > 50:
+            reasons.append("LOSS tb %.0f‰ > 50‰" % avg_loss)
+        if max_loss > 150:
+            reasons.append("LOSS max %d‰ > 150‰" % max_loss)
+        if d_crc > 0:
+            reasons.append("CRC lỗi %d" % d_crc)
+        if d_frag > 0:
+            reasons.append("mất mảnh %d" % d_frag)
+        if d_drop > 0:
+            reasons.append("drop queue %d" % d_drop)
+        if pump_n > 0 and pump_fail > 0:
+            reasons.append("bơm FAIL %d/%d" % (pump_fail, pump_n))
+        if reasons:
+            self.lbl_st_verdict.config(text="KHÔNG ĐẠT: " + "; ".join(reasons), fg=FAIL_FG)
+        else:
+            self.lbl_st_verdict.config(
+                text="ĐẠT (LOSS tb %.0f‰, %d mẫu, không rớt link)" % (avg_loss, len(loss_list)),
+                fg=PASS_FG)
+
+    def stress_export_csv(self):
+        if not self.stress_rows:
+            messagebox.showinfo(APP_TITLE, "Chưa có dữ liệu stress test.")
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".csv", filetypes=[("CSV", "*.csv")],
+            initialfile="stress_rf_%s.csv" % datetime.now().strftime("%Y%m%d_%H%M%S"))
+        if not path:
+            return
+        with open(path, "w", encoding="utf-8-sig") as f:
+            f.write("t_s,link,loss_promille,redund,d_hb_tx,d_hb_rx,d_crc,d_frag,d_drop,pump_ok,pump_fail\n")
+            for r in self.stress_rows:
+                f.write(",".join(str(x) for x in r) + "\n")
+        messagebox.showinfo(APP_TITLE, "Đã lưu: %s" % path)
+
     def _build_terminal_tab(self, parent):
         self.term_log = tk.Text(parent, bg=TERM_BG, fg=TERM_FG, font=FONT_MONO,
                                  insertbackground=WHITE)
@@ -737,6 +1388,12 @@ def main():
     app = MbwTestApp(root)
 
     def on_close():
+        if getattr(app, "_xlog_on", False):  # dang ghi log -> luu not phan dem
+            app._xlog_on = False
+            try:
+                app._fwd_log_flush(final=True)
+            except Exception:
+                pass
         app.link.disconnect()
         root.destroy()
 

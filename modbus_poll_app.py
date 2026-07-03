@@ -600,7 +600,9 @@ class ModbusPollApp(tk.Tk):
         tk.Label(card, text="Cổng (Port):", bg=WHITE, fg=INK, font=FONT_SM).grid(
             row=1, column=0, padx=(10, 4), pady=(0, 10), sticky="e")
         self.port_var = tk.StringVar()
-        self.port_combo = ttk.Combobox(card, textvariable=self.port_var, width=12,
+        # rong 32 ky tu + kem MO TA thiet bi (dong bo voi app chinh
+        # mbw_test_app.py) de chon dung cong khi may co nhieu COM
+        self.port_combo = ttk.Combobox(card, textvariable=self.port_var, width=32,
                                         state="readonly", font=FONT_SM)
         self.port_combo.grid(row=1, column=1, padx=4, pady=(0, 10))
         sec_btn(card, "↻", command=self._refresh_ports, width=3).grid(
@@ -772,12 +774,20 @@ class ModbusPollApp(tk.Tk):
         self.conn_indicator.create_oval(2, 2, 14, 14, fill=color, outline="")
 
     def _refresh_ports(self):
+        # "COM9 - USB-SERIAL CH340" (dong bo voi app chinh) - khi ket noi se
+        # tach lay ten cong bang _selected_port()
         ports = []
         if list_ports is not None:
-            ports = [p.device for p in list_ports.comports()]
+            for p in list_ports.comports():
+                desc = (p.description or "").strip()
+                ports.append("%s - %s" % (p.device, desc) if desc else p.device)
         self.port_combo["values"] = ports
         if ports and not self.port_var.get():
             self.port_var.set(ports[0])
+
+    def _selected_port(self):
+        """Ten cong thuc (COM9) tu chuoi hien thi 'COM9 - USB-SERIAL CH340'."""
+        return self.port_var.get().split(" - ")[0].strip()
 
     def _clear_log(self):
         self.log_text.configure(state="normal")
@@ -844,7 +854,7 @@ class ModbusPollApp(tk.Tk):
             self._connect()
 
     def _connect(self):
-        port = self.port_var.get()
+        port = self._selected_port()
         if not port:
             messagebox.showwarning(APP_TITLE, "Vui long chon cong COM.")
             return
@@ -999,7 +1009,7 @@ class ModbusPollApp(tk.Tk):
         if self.auto_scan_thread is not None and self.auto_scan_thread.is_alive():
             self.auto_scan_cancel.set()
             return
-        port = self.port_var.get()
+        port = self._selected_port()
         if not port:
             messagebox.showwarning(APP_TITLE, "Vui long chon cong COM.")
             return

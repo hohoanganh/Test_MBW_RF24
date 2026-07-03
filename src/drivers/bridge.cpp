@@ -14,6 +14,15 @@ static uint8_t s_buf[MODBUS_MAX_LEN];
 static uint16_t s_len = 0;
 static uint32_t s_last_byte_us = 0;
 
+// 2026-07-03: frame lam viec cua TUNG task chuyen tu stack sang STATIC.
+// Truoc day moi rtos_frame_t (252 byte) nam tren stack cua
+// bridge_rs485_step()/bridge_rf_step() lam TRAN STACK task RF (LED nhay 2
+// xung - hook trong main.cpp) voi stack 176 word. Moi frame duoc dung TUAN TU
+// trong 1 task duy nhat (s_frame_rs485 chi trong task RS485, s_frame_rf chi
+// trong task RF) nen static la an toan, khong can mutex.
+static rtos_frame_t s_frame_rs485; // CHI task RS485 dung (flush + nhan queue)
+static rtos_frame_t s_frame_rf;    // CHI task RF dung (nhan queue + doc RF + echo debug)
+
 static uint32_t s_cnt_rs485_to_rf = 0;
 static uint32_t s_cnt_rf_to_rs485 = 0;
 // Dem so khung bi ROT vi hang doi lien-task day (g_qToRF/g_qToRS485 sau = 1) -
@@ -88,7 +97,7 @@ static uint32_t frame_gap_us() {
 static void flush_rs485_to_rf() {
   if (s_len == 0)
     return;
-  rtos_frame_t f;
+  rtos_frame_t &f = s_frame_rs485; // static, xem ghi chu dau file
   f.len = s_len;
   memcpy(f.data, s_buf, s_len);
   if (xQueueSend(g_qToRF, &f, 0) == pdPASS) {
@@ -117,7 +126,7 @@ void bridge_rs485_step() {
 
   // ----- Chieu RF -> RS485: lay khung da nhan tu task RF (neu co), day ra
   // RS485 that. Non-blocking: khong co thi bo qua vong nay, thu lai vong sau. -----
-  rtos_frame_t f;
+  rtos_frame_t &f = s_frame_rs485; // static, xem ghi chu dau file
   if (xQueueReceive(g_qToRS485, &f, 0) == pdPASS) {
     if (s_enabled && f.len > 0) {
       rs485_send(f.data, f.len);
@@ -137,14 +146,15 @@ void bridge_rf_step() {
     // Lay khung RS485->RF (neu co) tu task RS485, gui that qua RF (co the mat
     // vai trieu giay do redundant TX - khong sao vi task nay uu tien thap hon
     // RS485, khong lam tre viec tach khung Modbus).
-    rtos_frame_t f;
+    rtos_frame_t &f = s_frame_rf; // static, xem ghi chu dau file
     if (xQueueReceive(g_qToRF, &f, 0) == pdPASS) {
       rf_send(f.data, f.len);
     }
 
     // Chieu RF -> RS485: day khung nhan duoc vao g_qToRS485 cho task RS485.
+    // Dung lai s_frame_rf (da xong viec voi khung gui o tren - tuan tu).
     if (rf_available()) {
-      rtos_frame_t out;
+      rtos_frame_t &out = s_frame_rf;
       uint16_t n = rf_read(out.data, sizeof(out.data));
       if (n > 0) {
         out.len = n;
@@ -156,8 +166,9 @@ void bridge_rf_step() {
     // Bridge OFF: giu lai hanh vi debug cu (khong forward, chi echo ra console
     // de ky thuat vien xem thu RF co nhan duoc gi khong khi dang test rieng
     // le cac lenh CLI "rf tx <text>"/"rs485 <text>").
-    uint8_t buf[MODBUS_MAX_LEN];
-    uint16_t n = rf_read(buf, sizeof(buf) - 1);
+    // Dung lai s_frame_rf.data thay vi them 250B tren stack (xem ghi chu dau file)
+    uint8_t *buf = s_frame_rf.data;
+    uint16_t n = rf_read(buf, sizeof(s_frame_rf.data) - 1);
     buf[n] = 0;
     dbg_lock();
     SerialDBG.print("RF RX: ");

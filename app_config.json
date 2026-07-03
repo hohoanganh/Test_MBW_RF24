@@ -1,6 +1,8 @@
 {
   "device_id": "MBW_RF24_RS485",
   "console_baud": 115200,
+  "chk_min_len": 5,
+  "chk_max_len": 256,
   "test_groups": [
     {
       "key": "id",
@@ -38,6 +40,21 @@
       "name": "Kiểm tra nRF24L01 có mặt",
       "cmd": "rf id",
       "expect_contains": "RF_ID=OK"
+    },
+    {
+      "key": "rf_hb",
+      "name": "RF heartbeat (link 2 chiều với board đối diện)",
+      "cmd": "rf stat",
+      "check": "rf_hb",
+      "manual_prereq": "Cần board thứ 2 (cùng NETID) đang bật nguồn trong tầm sóng."
+    },
+    {
+      "key": "rf_loss",
+      "name": "RF khung mất (LOSS ≤ 100‰)",
+      "cmd": "rf stat",
+      "check": "rf_loss",
+      "loss_max_promille": 100,
+      "manual_prereq": "Cần board thứ 2 đang bật và link UP tối thiểu ~30 giây để LOSS có ý nghĩa thống kê."
     }
   ]
 }

@@ -54,9 +54,16 @@ typedef struct {
 // heap co dinh - giam tong dung luong cap phat trong setup() la cach giam
 // rui ro va cham thuc te (khong dua duoc configTOTAL_HEAP_SIZE, macro nay
 // KHONG duoc allocator hien tai su dung - xem ghi chu trong platformio.ini).
-#define RTOS_STACK_RS485 192 // 768 byte
-#define RTOS_STACK_RF 192    // 768 byte
-#define RTOS_STACK_CLI 384   // 1536 byte (sscanf/sprintf trong hal.cpp ton stack hon)
+// 2026-07-03: giam tiep 192->176 (RS485/RF) va 384->320 (CLI) de het tran
+// RAM 808 byte khi link (region RAM overflowed). SAU KHI NAP PHAI kiem tra
+// "rtos stat" (uxTaskGetStackHighWaterMark) tren board that - neu high water
+// mark cua task nao < 32 word thi phai tang lai stack task do.
+// 2026-07-03 (lan 2): sau khi chuyen rtos_frame_t (252B) trong bridge.cpp tu
+// stack sang static (s_frame_rs485/s_frame_rf), stack RS485/RF khong con phai
+// chua frame nua -> giam 176->160 word. CLI giu 320 (sscanf/sprintf).
+#define RTOS_STACK_RS485 160 // 640 byte
+#define RTOS_STACK_RF 160    // 640 byte
+#define RTOS_STACK_CLI 320   // 1280 byte (sscanf/sprintf trong hal.cpp ton stack hon)
 
 // Uu tien (so cang lon cang uu tien cao, tskIDLE_PRIORITY = 0). RS485 uu tien
 // CAO NHAT de giu dung khoang lang 3.5 ky tu tach khung Modbus - bi task khac
