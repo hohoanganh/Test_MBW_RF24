@@ -508,15 +508,16 @@ uint8_t rf_get_redundancy() { return s_redundant_tx; }
 
 // ----- Heartbeat / Link health THEO TUNG dev_id (muc 3.3/7.1) -----
 bool rf_dev_seen(uint8_t dev_id) {
-  return (dev_id < RF_MAX_DEV) ? s_dev_seen[dev_id] : false;
+  return (dev_id < RF_MAX_DEV) && (s_dev_last_seen_s[dev_id] != 0);
 }
 bool rf_dev_link_up(uint8_t dev_id) {
-  return (dev_id < RF_MAX_DEV) ? s_dev_link_up[dev_id] : false;
+  return (dev_id < RF_MAX_DEV) && dev_bitmap_get(s_dev_link_up_bitmap, dev_id);
 }
-uint32_t rf_dev_age_ms(uint8_t dev_id) {
-  if (dev_id >= RF_MAX_DEV || !s_dev_seen[dev_id])
+uint32_t rf_dev_age_s(uint8_t dev_id) {
+  if (!rf_dev_seen(dev_id))
     return 0xFFFFFFFFUL; // chua tung thay
-  return (uint32_t)(millis() - s_dev_last_seen_ms[dev_id]);
+  uint16_t now_s = (uint16_t)(millis() / 1000);
+  return (uint32_t)(uint16_t)(now_s - s_dev_last_seen_s[dev_id]); // wrap-safe (giong kieu millis())
 }
 
 uint16_t rf_get_loss_permille() {

@@ -1,4 +1,4 @@
-it# MBW RF24 RS485 – Định hướng phát triển mạng tới 64 node (Modbus RTU)
+# MBW RF24 RS485 – Định hướng phát triển mạng tới 64 node (Modbus RTU)
 
 > Tổng hợp từ buổi phân tích 2026-07-03/04, dựa trên code thực tế
 > (`src/drivers/rf_link.cpp`, `drv_common.h`, `bridge.cpp`) + README. Mục tiêu:

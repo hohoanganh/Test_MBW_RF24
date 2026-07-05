@@ -2,8 +2,18 @@
 
 Firmware PlatformIO (Arduino/STM32duino, STM32L151C8T6) + app test Python (tkinter)
 cho board **MBW RF24 RS485 2.0** (`MBW_RF24_RS485_2I0_RevB`). Sản phẩm: chuyển đổi
-RS485 (Modbus RTU/ASCII) ⇄ Wireless 2.4GHz (nRF24L01P + RFX2401C PA/LNA), hỗ trợ 64
-mạng Modbus độc lập (Network ID) chọn bằng DIP switch.
+RS485 (Modbus RTU/ASCII) ⇄ Wireless 2.4GHz (nRF24L01P + RFX2401C PA/LNA).
+
+Quy mô mạng: **1 Hub + tối đa 64 Slave dùng chung 1 NET_ID** (triển khai thực tế
+trước mắt: 1 Hub + 16 Slave — xem
+[`docs/Dinh_Huong_Mo_Rong_64_Node_ModbusRTU.md`](docs/Dinh_Huong_Mo_Rong_64_Node_ModbusRTU.md)).
+2 con số độc lập nhau (2026-07-04/05, xem mục "Kiến trúc mạng: DEV_ID vs NET_ID"
+bên dưới):
+- **DEV_ID** (0-63, DIP switch SW1-6) — định danh RF **riêng từng board** trong
+  1 mạng: `0` = Hub, `1-63` = Slave. Độc lập hoàn toàn với địa chỉ Modbus thật.
+- **NET_ID** (0-63, CLI `net id` + lưu Flash) — hằng số **chung cho cả 1
+  deployment** (Hub + mọi Slave cùng giá trị), dùng để cách ly nhiều lắp đặt
+  RS485 độc lập nằm gần nhau về vật lý (vùng phủ RF chồng lấn).
 
 Tham khảo kiến trúc từ 2 project cũ trong `_reference/` (Smart PDU 2I0, OPMS 1.6
 Slave): driver tách theo nhóm chức năng trong `src/drivers/`, CLI qua Console
@@ -52,17 +62,18 @@ Test_MBW_RF24/                     (thư mục project)
 │   ├── rtos_glue.h / rtos_glue.cpp ← queue (g_qToRF/g_qToRS485) + mutex (g_muSPI/g_muSerial)
 │   │                                 dùng chung giữa 3 task - xem "Kiến trúc RTOS"
 │   └── drivers/
-│       ├── drv_common.h/.cpp      ← khung tin RF 32 byte + CRC16-MODBUS dùng chung
-│       ├── dipsw.cpp/.h           ← DIP switch 8-bit (74HC165): Network ID + Baud
+│       ├── drv_common.h/.cpp      ← khung tin RF 32 byte (dev_id/seq/frag/len/CRC16) dùng chung
+│       ├── dipsw.cpp/.h           ← DIP switch 8-bit (74HC165): DEV_ID (0=Hub,1-63=Slave) + Baud
 │       ├── rs485.cpp/.h           ← RS485 USART2 (send/loopback/baud runtime)
-│       ├── flashmem.cpp/.h        ← SPI Flash W25Q128 (id/read/write/erase)
+│       ├── flashmem.cpp/.h        ← SPI Flash W25Q128 (id/read/write/erase) + persist NET_ID
 │       ├── rtc.cpp/.h             ← RTC PCF85063 (I2C)
 │       ├── ledbuzz.cpp/.h         ← LED_LIFE, Buzzer, nút nhấn S2
-│       ├── rf_link.cpp/.h         ← nRF24L01+RFX2401C (thư viện RF24 + framing riêng)
+│       ├── rf_link.cpp/.h         ← nRF24L01+RFX2401C (thư viện RF24 + framing riêng, dedup/heartbeat theo dev_id)
 │       └── bridge.cpp/.h          ← CHỨC NĂNG CHÍNH: cầu RS485 <-> Wireless
 │
 └── docs/
-    └── MBW_Test_Procedure.md      ← hướng dẫn test 1 board/máy + quan sát forward
+    ├── MBW_Test_Procedure.md      ← hướng dẫn test 1 board/máy + quan sát forward
+    └── Dinh_Huong_Mo_Rong_64_Node_ModbusRTU.md ← thiết kế mạng 1 Hub + tới 64 Slave (DEV_ID/NET_ID, repeater, lộ trình)
 ```
 
 ---
@@ -72,7 +83,38 @@ Test_MBW_RF24/                     (thư mục project)
 Một firmware duy nhất — chức năng cầu RS485⇄Wireless **mặc định BẬT ngay khi
 cấp nguồn** (không cần lệnh kích hoạt, đây là hành vi chuẩn của sản phẩm khi
 lắp đặt thật). Lệnh CLI `bridge on|off` chỉ dùng để kỹ thuật viên tạm dừng khi
-cần chạy các lệnh test RS485/RF thủ công khác.
+cần chạy các lệnh test RS485/RF thủ công khác. Mọi board (Hub lẫn Slave) chạy
+**CHUNG 1 bản firmware** — vai trò tự xác định lúc boot qua `dev_id` đọc từ
+DIP (xem mục dưới), không cần build/nạp riêng cho Hub.
+
+### Kiến trúc mạng: DEV_ID vs NET_ID (2026-07-04/05)
+
+Thiết kế ban đầu gán `src_id` (định danh nguồn dùng để lọc trùng/theo dõi
+heartbeat) **bằng chính Network ID** — đúng cho 1 cặp Hub-Slave, nhưng SAI khi
+nhiều Slave dùng chung 1 Network ID: toàn bộ N thiết bị chỉ có 1 định danh
+nguồn duy nhất, làm lọc trùng (dedup) và LINK UP/DOWN không phân biệt được
+"ai gửi" — có thể **âm thầm loại bỏ frame hợp lệ** của thiết bị này vì trùng số
+thứ tự (`seq`) ngẫu nhiên với thiết bị khác. Đã tách thành 2 con số độc lập
+(chi tiết đầy đủ + lý do trong
+[`docs/Dinh_Huong_Mo_Rong_64_Node_ModbusRTU.md`](docs/Dinh_Huong_Mo_Rong_64_Node_ModbusRTU.md)):
+
+| | DEV_ID | NET_ID |
+|---|---|---|
+| Ý nghĩa | Định danh RF **riêng từng board** trong 1 mạng | Hằng số **chung cho cả 1 deployment** (Hub + mọi Slave) |
+| Phạm vi | 0-63: `0`=Hub, `1-63`=Slave | 0-63: cách ly nhiều lắp đặt độc lập nằm gần nhau vật lý (vùng phủ RF chồng lấn) |
+| Cấu hình | DIP switch SW1-6 (`dip_dev_id()`) — gạt DIP lúc lắp đặt, không cần laptop | CLI `net id <n>` — lưu SPI Flash (W25Q128), giữ qua các lần mất nguồn |
+| Liên hệ với địa chỉ Modbus | **Độc lập hoàn toàn** — không cần bằng địa chỉ Modbus thật của slave | Không liên quan |
+| Mặc định khi chưa cấu hình | DIP để nguyên (không gạt bit nào) = `0` = Hub | Sentinel `0xFF` (chưa cấu hình) — firmware cảnh báo rõ lúc boot |
+
+Khung tin RF (`rf_frame_t`, `drv_common.h`) mang trường `dev_id` (không tăng
+kích thước khung — dùng lại đúng vị trí byte đầu tiên trước đây là `src_id`).
+NET_ID không nằm trong payload vì đã ẩn sẵn trong địa chỉ pipe RF — mọi khung
+nhận được trên 1 pipe chắc chắn cùng NET_ID.
+
+**Trước khi lắp đặt nhiều board:** chạy `net id <n>` (cùng giá trị cho Hub +
+mọi Slave), gạt DIP `dev_id` không trùng nhau trên từng board (Hub để mặc định
+`0`), rồi dùng `rf devices` để xác nhận đúng 1 Hub + không trùng `dev_id` trước
+khi đưa vào vận hành thật (tương ứng bước T0 trong tài liệu thiết kế).
 
 ### Build & nạp
 
@@ -131,11 +173,22 @@ quá cả 10KB RAM của chip, đã ghi đè xuống 4KB qua `build_flags` trong
 lúc tạo task hoặc `vTaskStartScheduler()` không bao giờ chạy tới dòng lệnh sau
 nó, giảm `RTOS_STACK_xxx` trước khi tăng `configTOTAL_HEAP_SIZE`.
 
-> **Lưu ý xác thực:** code đã được kiểm tra cú pháp qua `g++ -fsyntax-only` với
-> stub API FreeRTOS (không phải toolchain STM32 thật, vì sandbox không cài
-> được PlatformIO+ARM toolchain). Việc build/nạp thật (`pio run`) và xác nhận
-> RAM đủ dùng qua `rtos stat` trên board thật **vẫn cần thực hiện** trước khi
-> coi là hoàn tất.
+> **2026-07-05 — bài học RAM khi thêm DEV_ID/NET_ID:** bản đầu tiên của tính
+> năng theo dõi heartbeat/dedup riêng theo `dev_id` (mục "Kiến trúc mạng" ở
+> trên) dùng `bool[64]` x2 + `uint32_t last_seen_ms[64]` + bảng dedup 68-slot
+> kiểu tìm-kiếm-tuyến-tính — build thật trên `pio run` báo
+> **`region 'RAM' overflowed by 200 bytes`**. Đã tối ưu lại trong
+> `rf_link.cpp`: dedup bỏ hẳn bảng "slot + tìm kiếm" (không cần thiết vì
+> `dev_id` đã bị chặn đúng 0-63 = đúng số phần tử mảng, dùng thẳng `dev_id`
+> làm chỉ số mảng); 2 mảng `bool[64]` đổi thành bitmap `uint8_t[8]`; mốc thời
+> gian theo từng `dev_id` đổi từ `uint32_t` mili-giây (256 byte) sang
+> `uint16_t` giây (128 byte, chỉ dùng cho hiển thị CLI chẩn đoán, KHÔNG ảnh
+> hưởng thuật toán redundant-TX toàn cục vẫn dùng `millis()` 32-bit như cũ).
+> Tổng RAM các mảng này giảm từ ~576 byte xuống **~208 byte**. **Vẫn cần chạy
+> lại `pio run` trên máy thật + `rtos stat` để xác nhận đã đủ RAM** trước khi
+> coi là xong — sandbox môi trường này không tải được toolchain STM32 thật
+> (proxy mạng chặn PlatformIO Registry) nên chỉ rà soát code thủ công, không
+> tự build kiểm chứng được.
 
 ### Vì sao dùng thư viện RF24 thay vì tự viết driver SPI
 
@@ -151,7 +204,7 @@ làm ở lớp ứng dụng (`rf_link.cpp`), phía trên RF24:
 | `RF24_PA_MAX` + RFX2401C | PA/LNA ngoài khuếch đại thêm tầm phát/thu (TXEN/RXEN đấu cứng theo CE trên schematic, không cần GPIO riêng). |
 | `RF24_CRC_16` (phần cứng) + CRC16-MODBUS (phần mềm) | 2 lớp kiểm tra toàn vẹn — loại gói lỗi mà nRF24 tự CRC có thể bỏ sót khi nhiễu mạnh. |
 | Payload **cố định 32 byte** (không dynamic payload) | Bớt một lớp "bắt tay" giữa 2 đầu — ít điểm có thể lỗi khi tín hiệu yếu. |
-| **Tắt auto-ack/auto-retry phần cứng**, tự gửi lặp lại (mặc định 3 lần, **tự động 2-6 lần**) + lọc trùng theo `(src_id, seq)` | Đây là kênh **broadcast** (nhiều thiết bị cùng Network ID cùng nghe 1 địa chỉ) — ACK 1-1 không hợp lệ khi có nhiều bên nhận. Gửi lặp lại không cần ACK vẫn tăng xác suất tới nơi trong môi trường nhiễu. |
+| **Tắt auto-ack/auto-retry phần cứng**, tự gửi lặp lại (mặc định 3 lần, **tự động 2-6 lần**) + lọc trùng theo `(dev_id, seq)` | Đây là kênh **broadcast** (nhiều thiết bị cùng NET_ID cùng nghe 1 địa chỉ) — ACK 1-1 không hợp lệ khi có nhiều bên nhận. Gửi lặp lại không cần ACK vẫn tăng xác suất tới nơi trong môi trường nhiễu. Lọc trùng khóa theo `dev_id` **riêng từng board** (không phải theo Network ID chung như thiết kế cũ) — xem mục "Kiến trúc mạng: DEV_ID vs NET_ID". |
 | **Heartbeat + đo chất lượng link** (lấy ý tưởng từ bộ telemetry MAVLink/SiK radio) | Mỗi board tự phát 1 khung điều khiển nhỏ mỗi giây (không đụng vào dữ liệu Modbus) để bên kia biết "còn sống"; nếu quá 3s không nhận được gì (kể cả dữ liệu thật) thì báo `RF LINK: DOWN`. Tỷ lệ "kỳ mất trắng" đo được dùng để **tự tăng số lần gửi lặp khi link kém, tự giảm khi link ổn định trở lại** — tối ưu độ tin cậy mà không tốn băng thông khi không cần thiết. |
 
 ### Heartbeat + giám sát chất lượng link RF
@@ -165,14 +218,28 @@ hiệu nhận biết, không thể trùng với khung dữ liệu thật). Cơ c
 - Quá `RF_LINK_TIMEOUT_MS` (3 giây, ~3 chu kỳ heartbeat) không nhận được gì →
   in `RF LINK: DOWN (peer=<id>, <n>ms...)`. Khi nhận lại được → in
   `RF LINK: UP (peer=<id>)`. Giống cách Mission Planner báo "mất kết nối" khi
-  hết heartbeat MAVLink.
+  hết heartbeat MAVLink. Đây là trạng thái **gộp toàn mạng** (link sống nếu
+  BẤT KỲ thiết bị nào còn phát) — dùng riêng cho thuật toán redundant-TX tự
+  thích ứng bên dưới.
+- **Theo dõi riêng từng `dev_id`** (2026-07-05, xem mục "Kiến trúc mạng"): vì
+  N thiết bị cùng chia sẻ 1 NET_ID, biết "link chung còn sống" không nói lên
+  được đúng thiết bị nào đang mất sóng. Firmware log riêng biệt
+  `RF LINK: UP (dev_id=<n>)` / `RF LINK: DOWN (dev_id=<n>, <n>s...)` cho từng
+  thiết bị, đọc qua lệnh CLI `rf devices` (liệt kê toàn bộ) hoặc
+  `rf dev <id>` (1 thiết bị). Để tiết kiệm RAM (chip chỉ 10KB), mốc thời gian
+  theo từng `dev_id` lưu ở độ phân giải **giây** (không phải mili-giây như
+  trạng thái toàn mạng) — đủ dùng vì ngưỡng timeout là 3 giây.
 - **Redundant TX tự thích ứng**: cứ mỗi chu kỳ 1 giây không nhận được gì tính
   là 1 "kỳ mất trắng" — 2 kỳ mất liên tiếp thì tự tăng số lần gửi lặp (tối đa
   6 lần); 5 kỳ tốt liên tiếp thì tự giảm về mức thấp hơn (tối thiểu 2 lần) để
   đỡ chiếm kênh khi link đã ổn định. In log `RF: link kém, tăng độ dự phòng
-  lên N` / `RF: link ổn định, giảm độ dự phòng còn N` mỗi lần đổi.
-- Lệnh `rf stat` hiển thị đầy đủ: `RF_LINK=UP|DOWN PEER=<id> AGE_MS=<n>
-  LOSS_PROMILLE=<n> REDUND=<n> HB_TX=<n> HB_RX=<n>`.
+  lên N` / `RF: link ổn định, giảm độ dự phòng còn N` mỗi lần đổi. Thuật toán
+  này vẫn tính TOÀN MẠNG (chưa tách theo `dev_id`) — xem tài liệu thiết kế mục
+  3.3 về lý do và hướng làm sau này nếu cần.
+- Lệnh `rf stat` hiển thị đầy đủ: `RF_LINK=UP|DOWN LAST_DEV_ID=<id> AGE_MS=<n>
+  LOSS_PROMILLE=<n> REDUND=<n> HB_TX=<n> HB_RX=<n> RF_NETID=<n> RF_DEVID=<n>`
+  (trạng thái toàn mạng + NET_ID/DEV_ID của chính board). Dùng `rf devices` /
+  `rf dev <id>` để xem trạng thái UP/DOWN **theo từng thiết bị**.
 - App test (`mbw_test_app.py`, tab Giám sát Forward) có nhãn **RF Link** hiển
   thị UP/DOWN theo thời gian thực (đọc dòng log tức thời) + nút "Đọc RF Link
   (rf stat)" để xem % mất và độ dự phòng hiện tại — tự động làm mới mỗi 3 giây
@@ -184,18 +251,21 @@ hiệu nhận biết, không thể trùng với khung dữ liệu thật). Cơ c
 |---|---|
 | `id` / `ver` / `help` | ID thiết bị / phiên bản FW / danh sách lệnh |
 | `led` / `beep on\|off` | Toggle LED_LIFE / tắt-bật tiếng bíp |
-| `dip` | Đọc DIP switch: `NETID` (0-63) + `BAUD` (4800/9600/14400/19200) |
+| `dip` | Đọc DIP switch: `DEVID` (0-63, kèm `(HUB)`/`(SLAVE)`) + `BAUD` (4800/9600/14400/19200) |
 | `rs485 <text>` | Gửi thử 1 chuỗi ra RS485 |
 | `rsl` | Loopback RS485 (cần nối tắt A-B) |
 | `rs485mon on\|off` | Forward RX RS485 ra console (KHÔNG bật cùng lúc với `bridge on`) |
 | `baud rs485 <bps>` | Đổi baudrate RS485 lúc chạy |
 | `flash` / `fwr` | Đọc JEDEC ID / test ghi-đọc SPI Flash W25Q128 |
 | `rtc` / `rtc set <hh:mm:ss>` | Đọc/đặt giờ RTC PCF85063 |
+| `net id <0-63>` / `net id` | Ghi/đọc **NET_ID** — hằng số chung cho cả deployment, **lưu Flash** (giữ qua các lần mất nguồn), áp dụng ngay không cần reset board |
 | `rf id` | Kiểm tra nRF24L01 có mặt (SPI) |
 | `rf ch <0-125>` | Đặt kênh RF (mặc định 120, vùng tránh WiFi 1-11) |
-| `rf netid <0-63>` | Ghi đè Network ID lúc chạy (mặc định lấy từ DIP lúc boot) |
+| `rf netid <0-63>` | Ghi đè NET_ID **tạm thời** (chỉ trong RAM, KHÔNG lưu Flash) — dùng `net id` ở trên để lưu vĩnh viễn |
 | `rf tx <text>` | Gửi 1 bản tin không dây thủ công (kỹ thuật viên tự kiểm tra RF thô, cần `bridge off` tạm thời) |
-| `rf stat` / `rf reset` | Thống kê TX/RX OK/trùng/lỗi CRC/rớt mảnh + kênh/NETID + **LINK UP/DOWN, % mất, độ dự phòng tự thích ứng** |
+| `rf stat` / `rf reset` | Thống kê TX/RX OK/trùng/lỗi CRC/rớt mảnh + kênh/NET_ID/DEV_ID + **LINK UP/DOWN toàn mạng, % mất, độ dự phòng tự thích ứng** |
+| `rf devices` | Liệt kê mọi `dev_id` **đã từng nghe thấy** + vai trò (HUB/SLAVE) + UP/DOWN + số giây từ lần nghe cuối — dò trùng lặp `dev_id`/thiếu Hub lúc nghiệm thu |
+| `rf dev <0-63>` | Xem chi tiết link **1 `dev_id` riêng lẻ** (UP/DOWN + số giây từ lần nghe cuối) |
 | `bridge on\|off` | Tạm BẬT/TẮT chức năng cầu RS485⇄Wireless (**mặc định ON ngay khi cấp nguồn**) |
 | `bridge log on\|off` | Bật/tắt in dòng `FWD ...` khi relay (**mặc định ON**, app đọc dòng này để hiển thị) |
 | `bridge stat` / `bridge reset` | Thống kê số khung đã relay 2 chiều + trạng thái bridge/log + số khung bị rớt do hàng đợi liên-task đầy (`DROP_RS485_TO_RF`/`DROP_RF_TO_RS485`) |
@@ -248,8 +318,18 @@ Log Modbus Poll (Excel riêng, do người dùng chọn nơi lưu) — xem `modb
 ## Cần xác nhận/hiệu chỉnh trên bàn test (calib)
 
 - **Thứ tự bit DIP switch** (SW1-8 ↔ ngõ A-H của 74HC165): netlist trích xuất
-  từ PDF bị nén, `dipsw.cpp` giả định bit0-5=SW1-6 (Network ID), bit6-7=SW7-8
+  từ PDF bị nén, `dipsw.cpp` giả định bit0-5=SW1-6 (**DEV_ID**, 0=Hub/1-63=Slave
+  — đổi vai trò từ Network ID cũ, xem mục "Kiến trúc mạng"), bit6-7=SW7-8
   (Baudrate) — cần đối chiếu thực tế và sửa lại nếu khác.
+- **NET_ID lưu Flash**: chưa xác nhận trên phần cứng thật việc `net id <n>`
+  ghi xuống rồi đọc lại đúng sau khi rút nguồn/cấp lại (địa chỉ
+  `NET_ID_FLASH_ADDR = 0x001000`, `flashmem.h`) — nên test trước khi lắp đặt
+  hàng loạt.
+- **T0 (xác nhận mạng trước khi vận hành thật)**: dùng `net id` (đọc lại từng
+  board xem cùng giá trị), `rf devices` (đúng 1 `dev_id=0`, không trùng
+  `dev_id` khác) — xem mục "Kiến trúc mạng" và
+  [`docs/Dinh_Huong_Mo_Rong_64_Node_ModbusRTU.md`](docs/Dinh_Huong_Mo_Rong_64_Node_ModbusRTU.md)
+  mục 3.2.f để biết đầy đủ tiêu chí đạt.
 - **TXEN/RXEN của RFX2401C**: tài liệu giả định đấu cứng theo PA8/RF_CE (không
   cần firmware can thiệp) — nên đo bằng oscilloscope lúc TX/RX để xác nhận.
   Nếu KHÔNG tự chuyển mạch theo CE, cần bổ sung GPIO điều khiển riêng trong
@@ -264,8 +344,9 @@ Log Modbus Poll (Excel riêng, do người dùng chọn nơi lưu) — xem `modb
 - **`_reference/` chứa firmware/app các đợt trước** (đối chiếu pin map / luồng
   test cũ của OPMS & Smart PDU) — không phải code của board này.
 - **RAM RTOS trên phần cứng thật**: `configTOTAL_HEAP_SIZE=4KB` + stack từng
-  task (`rtos_glue.h`) mới chỉ được tính toán/kiểm tra cú pháp trong sandbox,
-  CHƯA build/nạp thật lên STM32L151C8T6. Sau khi `pio run -t upload`, dùng lệnh
-  `rtos stat` để xác nhận heap còn trống > 0 và stack từng task không về gần 0
-  — nếu thiếu, giảm `RTOS_STACK_RS485/RF/CLI` trước khi tăng
-  `configTOTAL_HEAP_SIZE`.
+  task (`rtos_glue.h`). Đã từng gặp `region 'RAM' overflowed by 200 bytes` lúc
+  link (xem ghi chú "bài học RAM" trong mục RAM budget ở trên) do mảng
+  dev_id/dedup ban đầu quá lớn — đã tối ưu lại. Sau khi `pio run -t upload`
+  thành công, vẫn nên dùng lệnh `rtos stat` để xác nhận heap còn trống > 0 và
+  stack từng task không về gần 0 — nếu thiếu, giảm `RTOS_STACK_RS485/RF/CLI`
+  trước khi tăng `configTOTAL_HEAP_SIZE`.

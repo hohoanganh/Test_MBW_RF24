@@ -336,7 +336,7 @@ static void cli_execute(char *cmd) {
   // thieu Hub luc nghiem thu, va biet CHINH XAC slave nao dang mat song. -----
   else if (strcmp(cmd, "rf devices") == 0) {
     dbg_lock();
-    SerialDBG.println("dev_id  role   link  age_ms");
+    SerialDBG.println("dev_id  role   link  age_s");
     for (uint16_t i = 0; i < 64; i++) {
       uint8_t id = (uint8_t)i;
       if (!rf_dev_seen(id))
@@ -345,7 +345,7 @@ static void cli_execute(char *cmd) {
       SerialDBG.print(id);
       SerialDBG.print(id == 0 ? "     HUB  " : "   SLAVE  ");
       SerialDBG.print(rf_dev_link_up(id) ? "UP    " : "DOWN  ");
-      SerialDBG.println(rf_dev_age_ms(id));
+      SerialDBG.println(rf_dev_age_s(id));
     }
     dbg_unlock();
   }
@@ -366,8 +366,8 @@ static void cli_execute(char *cmd) {
       SerialDBG.print(id == 0 ? " (HUB)" : " (SLAVE)");
       SerialDBG.print(" LINK=");
       SerialDBG.print(rf_dev_link_up((uint8_t)id) ? "UP" : "DOWN");
-      SerialDBG.print(" AGE_MS=");
-      SerialDBG.println(rf_dev_age_ms((uint8_t)id));
+      SerialDBG.print(" AGE_S=");
+      SerialDBG.println(rf_dev_age_s((uint8_t)id));
     }
     dbg_unlock();
   }
