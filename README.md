@@ -69,7 +69,8 @@ Test_MBW_RF24/                     (thư mục project)
 │       ├── rtc.cpp/.h             ← RTC PCF85063 (I2C)
 │       ├── ledbuzz.cpp/.h         ← LED_LIFE, Buzzer, nút nhấn S2
 │       ├── rf_link.cpp/.h         ← nRF24L01+RFX2401C (thư viện RF24 + framing riêng, dedup/heartbeat theo dev_id)
-│       └── bridge.cpp/.h          ← CHỨC NĂNG CHÍNH: cầu RS485 <-> Wireless
+│       ├── bridge.cpp/.h          ← CHỨC NĂNG CHÍNH: cầu RS485 <-> Wireless
+│       └── watchdog.cpp/.h        ← IWDG watchdog (wrap thư viện IWatchdog) - "wdt stat"
 │
 └── docs/
     ├── MBW_Test_Procedure.md      ← hướng dẫn test 1 board/máy + quan sát forward
@@ -190,6 +191,42 @@ nó, giảm `RTOS_STACK_xxx` trước khi tăng `configTOTAL_HEAP_SIZE`.
 > (proxy mạng chặn PlatformIO Registry) nên chỉ rà soát code thủ công, không
 > tự build kiểm chứng được.
 
+### Watchdog (IWDG) — tự phục hồi khi treo máy
+
+**2026-07-05:** trước đây firmware KHÔNG có watchdog — nếu 1 trong 3 task RTOS
+bị treo thật (deadlock mutex, chờ SPI vô hạn, kẹt trong vòng lặp gửi RF do
+phần cứng lỗi...), máy đứng im vô hạn (chỉ có
+`vApplicationStackOverflowHook()` nháy LED báo hiệu, KHÔNG tự reset) — rủi ro
+thật với thiết bị lắp đặt không người trông coi. Đã thêm IWDG (Independent
+Watchdog, chạy bằng LSI nội bộ ~37kHz, không phụ thuộc thạch anh chính) qua
+thư viện `IWatchdog` bundled sẵn trong STM32duino core.
+
+**Thiết kế: watchdog theo sức khỏe từng task**, không phải "feed vô điều
+kiện" (`src/drivers/watchdog.h/.cpp` + mục watchdog trong `rtos_glue.h/.cpp`):
+
+- Mỗi task (RS485, RF, CLI — `main.cpp`) tự ghi `millis()` vào 1 biến riêng
+  (`g_aliveRS485Ms`/`g_aliveRFMs`/`g_aliveCLIMs`) **mỗi vòng lặp** của nó.
+- `loop()` (thân của Idle task sau `vTaskStartScheduler()`) là nơi **duy
+  nhất** gọi `wdt_feed()` (`IWatchdog.reload()`) — và **chỉ feed khi cả 3
+  task đều vừa "điểm danh" trong `RTOS_TASK_ALIVE_TIMEOUT_MS`** (3 giây, xem
+  `rtos_all_tasks_alive()`). Nếu **đúng 1 task** bị treo trong khi 2 task còn
+  lại vẫn chạy bình thường, cơ chế này vẫn phát hiện được — không chỉ bắt
+  được trường hợp treo toàn hệ thống.
+- Timeout IWDG = **8 giây** (`wdt_init(8000000UL)` gọi sớm trong `setup()`,
+  trước `drv_init()`/tạo task) — dư dả so với thao tác chậm nhất trong
+  firmware (xóa sector Flash ~vài trăm ms, redundant TX tối đa 6 lần × nhiều
+  mảnh) để không reset nhầm, nhưng vẫn phục hồi được trong thời gian hợp lý
+  nếu treo thật.
+- Lệnh CLI **`wdt stat`**: `WDT_BOOT_WAS_RESET=yes|no` (lần khởi động trước
+  có bị watchdog reset không — chẩn đoán treo máy đã từng xảy ra),
+  `WDT_FEEDING=YES|NO` (đang được feed hay sắp bị reset), và tuổi điểm danh
+  (ms) của từng task — hữu ích để xác định NHANH task nào đang có vấn đề.
+
+**Lưu ý quan trọng khi debug qua ST-Link:** IWDG một khi đã `begin()` thì
+**không thể tắt lại** (đặc tính phần cứng của dòng STM32 này). Nếu halt CPU ở
+breakpoint lâu hơn 8 giây, IWDG vẫn đếm và sẽ RESET MCU ngay cả khi đang debug
+bình thường — đây là hiện tượng IWDG bình thường, không phải bug code.
+
 ### Vì sao dùng thư viện RF24 thay vì tự viết driver SPI
 
 Yêu cầu là liên kết RF **tối ưu, chịu nhiễu tốt trong môi trường công nghiệp**.
@@ -270,6 +307,7 @@ hiệu nhận biết, không thể trùng với khung dữ liệu thật). Cơ c
 | `bridge log on\|off` | Bật/tắt in dòng `FWD ...` khi relay (**mặc định ON**, app đọc dòng này để hiển thị) |
 | `bridge stat` / `bridge reset` | Thống kê số khung đã relay 2 chiều + trạng thái bridge/log + số khung bị rớt do hàng đợi liên-task đầy (`DROP_RS485_TO_RF`/`DROP_RF_TO_RS485`) |
 | `rtos stat` | RAM heap còn trống (`xPortGetFreeHeapSize`) + stack còn trống từng task RS485/RF/CLI — kiểm tra ngân sách RAM RTOS trên phần cứng thật |
+| `wdt stat` | Trạng thái watchdog IWDG: lần khởi động trước có bị reset do treo máy không (`WDT_BOOT_WAS_RESET`), đang được feed hay sắp reset (`WDT_FEEDING`), tuổi điểm danh từng task — xem mục "Watchdog (IWDG)" |
 
 Khi `bridge off`, mọi bản tin RF nhận được sẽ tự in ra console dạng
 `RF RX: <nội dung>` — dùng để kiểm tra RF thô giữa 2 board mà không qua bridge.

@@ -92,3 +92,20 @@ void rtos_glue_init(); // tao queue/mutex - goi 1 lan trong setup() TRUOC khi ta
 // khac dang in cung luc. KHONG goi long nhau (mutex khong dung kieu recursive).
 void dbg_lock();
 void dbg_unlock();
+
+// ----- Watchdog: "diem danh" tung task con song (2026-07-05, xem drivers/
+// watchdog.h) -----
+// Moi task (RS485/RF/CLI, xem main.cpp) tu ghi millis() vao dung 1 trong 3
+// bien duoi day O MOI VONG LAP cua no - ghi don gian (khong can mutex, gan
+// nguyen tu tren Cortex-M vi la kieu 32-bit thang hang). loop() (than Idle
+// task sau vTaskStartScheduler()) goi rtos_all_tasks_alive() truoc khi quyet
+// dinh co wdt_feed() hay khong - NEU 1 task ngung diem danh (treo that su),
+// ham nay tra ve false sau toi da RTOS_TASK_ALIVE_TIMEOUT_MS, IWDG khong con
+// duoc feed nua -> MCU tu RESET.
+#define RTOS_TASK_ALIVE_TIMEOUT_MS 3000 // qua thoi gian nay khong diem danh -> coi la task da treo
+
+extern volatile uint32_t g_aliveRS485Ms;
+extern volatile uint32_t g_aliveRFMs;
+extern volatile uint32_t g_aliveCLIMs;
+
+bool rtos_all_tasks_alive(); // true neu CA 3 task deu diem danh trong RTOS_TASK_ALIVE_TIMEOUT_MS gan nhat

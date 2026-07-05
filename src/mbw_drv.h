@@ -12,5 +12,6 @@
 #include "drivers/ledbuzz.h"
 #include "drivers/rf_link.h"
 #include "drivers/bridge.h"
+#include "drivers/watchdog.h"
 
 void drv_init();

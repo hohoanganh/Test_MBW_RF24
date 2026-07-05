@@ -36,3 +36,15 @@ void dbg_unlock() {
   if (g_muSerial)
     xSemaphoreGive(g_muSerial);
 }
+
+// ----- Watchdog: diem danh tung task (xem giai thich trong rtos_glue.h) -----
+volatile uint32_t g_aliveRS485Ms = 0;
+volatile uint32_t g_aliveRFMs = 0;
+volatile uint32_t g_aliveCLIMs = 0;
+
+bool rtos_all_tasks_alive() {
+  uint32_t now = millis();
+  return (uint32_t)(now - g_aliveRS485Ms) < RTOS_TASK_ALIVE_TIMEOUT_MS &&
+         (uint32_t)(now - g_aliveRFMs) < RTOS_TASK_ALIVE_TIMEOUT_MS &&
+         (uint32_t)(now - g_aliveCLIMs) < RTOS_TASK_ALIVE_TIMEOUT_MS;
+}

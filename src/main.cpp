@@ -23,13 +23,18 @@ HardwareSerial SerialRS485(RS485_RX, RS485_TX);
 //   Task CLI+ngoai vi (uu tien THAP NHAT, RTOS_PRIO_CLI): console CLI, DIP,
 //     nut nhan, buzzer, LED heartbeat - it nhay cam thoi gian nhat.
 //
-// loop() (Idle task, sau vTaskStartScheduler()) PHAI KHONG BAO GIO BLOCK theo
-// dung quy uoc cua STM32duino FreeRTOS - de trong, khong lam gi ca.
+// loop() (Idle task, sau vTaskStartScheduler()) KHONG con "de trong" nua tu
+// 2026-07-05: day la noi DUY NHAT feed watchdog IWDG - xem giai thich day du
+// trong drivers/watchdog.h va rtos_glue.h (muc "Watchdog: diem danh tung
+// task"). Van PHAI KHONG BAO GIO BLOCK theo dung quy uoc cua STM32duino
+// FreeRTOS (khong delay()/delayMicroseconds() dai) - wdt_feed() chi la 1 lenh
+// ghi thanh ghi, khong block.
 // =========================================================
 
 static void task_rs485(void *pvParameters) {
   (void)pvParameters;
   for (;;) {
+    g_aliveRS485Ms = millis(); // "diem danh" cho watchdog - xem rtos_glue.h
     rs485_process();  // "rs485mon" debug echo (chi active neu bat rieng)
     bridge_rs485_step();
     vTaskDelay(pdMS_TO_TICKS(1)); // nhuong CPU toi thieu, van kip thoi gian thuc voi gap 3.5 ky tu (>=1.75ms)
@@ -39,6 +44,7 @@ static void task_rs485(void *pvParameters) {
 static void task_rf(void *pvParameters) {
   (void)pvParameters;
   for (;;) {
+    g_aliveRFMs = millis(); // "diem danh" cho watchdog - xem rtos_glue.h
     bridge_rf_step(); // rf_process() (nhan+heartbeat) + gui khung tu hang doi RS485
     vTaskDelay(pdMS_TO_TICKS(2));
   }
@@ -103,6 +109,7 @@ extern "C" void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskNa
 static void task_cli(void *pvParameters) {
   (void)pvParameters;
   for (;;) {
+    g_aliveCLIMs = millis(); // "diem danh" cho watchdog - xem rtos_glue.h
     cli_process();   // console CLI (id/ver/help/rs485/rf/bridge/rtos stat/...)
     dip_process();   // in "DIP: ..." khi DIP switch thay doi
     btn_process();   // in "BTN: DOWN/UP" khi nhan nut S2
@@ -122,11 +129,24 @@ void setup() {
 
   hal_init();
   rtos_glue_init(); // tao queue/mutex TRUOC khi drv_init() (rf_init d.v. co the dung SPI ngay)
+
+  // 2026-07-05: bat IWDG CANG SOM CANG TOT - truoc drv_init()/tao task, vi
+  // mot khi da begin() thi KHONG THE tat lai (dac tinh phan cung, xem
+  // drivers/watchdog.h). wdt_init() tu doc+cache co "reset boi watchdog" cua
+  // lan khoi dong nay TRUOC khi begin() (xem watchdog.cpp). Timeout 8 giay:
+  // du du so voi thao tac cham nhat trong firmware (flash erase sector ~vai
+  // tram ms, redundant TX toi da 6 lan x nhieu manh) de khong reset nham,
+  // nhung van phuc hoi duoc trong thoi gian hop ly neu MCU treo that su.
+  wdt_init(8000000UL); // 8,000,000 us = 8 giay
+
   drv_init();
 
   uart_log("SYSTEM INIT");
   uart_log("MBW RF24 RS485 2.0 FW " FW_VERSION " (" __DATE__ ")");
   uart_log("RTOS: 3 task (RS485/Bridge, RF, CLI+peripherals) - xem 'rtos stat'");
+  uart_log("WATCHDOG: IWDG 8s, feed theo suc khoe tung task - xem 'wdt stat'");
+  if (wdt_boot_was_reset())
+    uart_log("CANH BAO: LAN KHOI DONG TRUOC BI WATCHDOG RESET (MCU da treo)!");
   uart_log("Type: help");
 
   // xTaskCreateStatic tra ve NULL neu that bai (khong con phu thuoc heap dong
@@ -158,5 +178,15 @@ void loop() {
   // Sau vTaskStartScheduler(), ham nay tro thanh THAN CUA IDLE TASK (uu tien
   // thap nhat trong FreeRTOS) theo quy uoc cua STM32duino FreeRTOS - PHAI
   // KHONG BAO GIO BLOCK (khong delay()/delayMicroseconds() dai) vi Idle task
-  // con lo don dep bo nho cac task da xoa. De trong la dung.
+  // con lo don dep bo nho cac task da xoa.
+  //
+  // 2026-07-05: VIEC DUY NHAT lam o day la feed watchdog IWDG, va CHI feed
+  // NEU CA 3 task RTOS deu vua "diem danh" gan day (rtos_all_tasks_alive(),
+  // xem rtos_glue.h). Neu 1 task bi treo that su, ham nay tra ve false sau
+  // toi da RTOS_TASK_ALIVE_TIMEOUT_MS, IWDG khong con duoc feed -> MCU tu
+  // RESET sau khi het thoi gian timeout (wdt_init() trong setup()). Day la 1
+  // lenh ghi thanh ghi don gian (wdt_feed()), khong block, an toan trong Idle
+  // task.
+  if (rtos_all_tasks_alive())
+    wdt_feed();
 }

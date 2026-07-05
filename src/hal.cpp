@@ -55,6 +55,7 @@ static void print_help() {
   SerialDBG.println("bridge log on|off  (in dong 'FWD ...' khi relay, mac dinh ON)");
   SerialDBG.println("bridge stat / bridge reset");
   SerialDBG.println("rtos stat  (RAM/stack con lai cua 3 task - kiem tra RTOS)");
+  SerialDBG.println("wdt stat  (watchdog IWDG: co reset lan truoc, dang feed hay khong, tuoi diem danh tung task)");
   dbg_unlock();
 }
 
@@ -449,6 +450,28 @@ static void cli_execute(char *cmd) {
     SerialDBG.print((unsigned long)hw_rf);
     SerialDBG.print(" CLI=");
     SerialDBG.println((unsigned long)hw_cli);
+    dbg_unlock();
+  }
+
+  // ----- WATCHDOG (IWDG, xem drivers/watchdog.h + rtos_glue.h) -----
+  else if (strcmp(cmd, "wdt stat") == 0) {
+    bool boot_was_reset = wdt_boot_was_reset();
+    bool all_alive = rtos_all_tasks_alive();
+    uint32_t now = millis();
+    uint32_t age_rs485 = now - g_aliveRS485Ms;
+    uint32_t age_rf = now - g_aliveRFMs;
+    uint32_t age_cli = now - g_aliveCLIMs;
+    dbg_lock();
+    SerialDBG.print("WDT_BOOT_WAS_RESET=");
+    SerialDBG.println(boot_was_reset ? "YES (lan truoc bi treo!)" : "no");
+    SerialDBG.print("WDT_FEEDING=");
+    SerialDBG.println(all_alive ? "YES (ca 3 task deu song)" : "NO (co task dang treo - sap RESET!)");
+    SerialDBG.print("TASK_ALIVE_AGE_MS RS485=");
+    SerialDBG.print(age_rs485);
+    SerialDBG.print(" RF=");
+    SerialDBG.print(age_rf);
+    SerialDBG.print(" CLI=");
+    SerialDBG.println(age_cli);
     dbg_unlock();
   }
 
