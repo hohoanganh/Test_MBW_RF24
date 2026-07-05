@@ -1,0 +1,84 @@
+<svg viewBox="0 0 1000 950" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>Quy trình giám sát Heartbeat, kiểm tra rớt gói RF theo dev_id và quyết định bật Repeater</title>
+<desc>Sơ đồ luồng: heartbeat 1 giây/lần theo dõi link-up/down và tỷ lệ mất gói theo từng dev_id, nếu vượt ngưỡng thì tối ưu vật lý trước, nếu vẫn kém thì bật repeater 1-hop cho đúng thiết bị đó, đo lại và triển khai chính thức kèm giám sát định kỳ.</desc>
+<defs>
+  <marker id="ar" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#334155"/></marker>
+</defs>
+<rect x="0" y="0" width="1000" height="950" fill="#ffffff"/>
+<text x="500" y="28" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#0f172a">Giám sát Heartbeat theo dev_id → Quyết định bật Repeater</text>
+
+<!-- A -->
+<rect x="270" y="50" width="360" height="58" rx="8" fill="#1e3a5f"/>
+<text x="450" y="74" text-anchor="middle" font-family="Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff">Heartbeat 1s/lần (mọi board, tag dev_id)</text>
+<text x="450" y="93" text-anchor="middle" font-family="Arial, sans-serif" font-size="11.5" fill="#cbd5e1">theo dõi LINK UP/DOWN + LOSS‰ riêng từng dev_id</text>
+
+<line x1="450" y1="108" x2="450" y2="140" stroke="#334155" stroke-width="1.6" marker-end="url(#ar)"/>
+
+<!-- D1 diamond -->
+<polygon points="450,138 610,193 450,248 290,193" fill="#fef9c3" stroke="#ca8a04" stroke-width="1.8"/>
+<text x="450" y="188" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#713f12">LOSS‰ &gt; 100 hoặc</text>
+<text x="450" y="204" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#713f12">từng LINK DOWN?</text>
+
+<!-- D1 -> B1 (KHÔNG) -->
+<line x1="610" y1="193" x2="710" y2="178" stroke="#334155" stroke-width="1.6" marker-end="url(#ar)"/>
+<text x="655" y="168" font-family="Arial, sans-serif" font-size="11" fill="#334155">KHÔNG</text>
+<rect x="710" y="150" width="250" height="55" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+<text x="835" y="182" text-anchor="middle" font-family="Arial, sans-serif" font-size="12.5" font-weight="700" fill="#14532d">Đạt chuẩn — không cần thêm</text>
+
+<!-- D1 -> C1 (CÓ) -->
+<line x1="450" y1="248" x2="450" y2="278" stroke="#334155" stroke-width="1.6" marker-end="url(#ar)"/>
+<text x="465" y="268" font-family="Arial, sans-serif" font-size="11" fill="#334155">CÓ</text>
+
+<rect x="270" y="280" width="360" height="55" rx="8" fill="#f1f5f9" stroke="#64748b" stroke-width="1.6"/>
+<text x="450" y="312" text-anchor="middle" font-family="Arial, sans-serif" font-size="12.5" font-weight="700" fill="#334155">Tối ưu vật lý: đổi kênh / anten / vị trí</text>
+
+<line x1="450" y1="335" x2="450" y2="367" stroke="#334155" stroke-width="1.6" marker-end="url(#ar)"/>
+
+<!-- D2 diamond -->
+<polygon points="450,365 610,420 450,475 290,420" fill="#fef9c3" stroke="#ca8a04" stroke-width="1.8"/>
+<text x="450" y="424" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#713f12">Cải thiện đạt chuẩn?</text>
+
+<!-- D2 -> B2 (CÓ) -->
+<line x1="610" y1="420" x2="710" y2="405" stroke="#334155" stroke-width="1.6" marker-end="url(#ar)"/>
+<text x="660" y="395" font-family="Arial, sans-serif" font-size="11" fill="#334155">CÓ</text>
+<rect x="710" y="377" width="250" height="55" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+<text x="835" y="409" text-anchor="middle" font-family="Arial, sans-serif" font-size="12.5" font-weight="700" fill="#14532d">Đạt — dừng ở đây</text>
+
+<!-- D2 -> C2 (KHÔNG) -->
+<line x1="450" y1="475" x2="450" y2="505" stroke="#334155" stroke-width="1.6" marker-end="url(#ar)"/>
+<text x="465" y="495" font-family="Arial, sans-serif" font-size="11" fill="#334155">KHÔNG</text>
+
+<rect x="270" y="507" width="360" height="55" rx="8" fill="#fffbeb" stroke="#d97706" stroke-width="1.8"/>
+<text x="450" y="539" text-anchor="middle" font-family="Arial, sans-serif" font-size="12.5" font-weight="700" fill="#92400e">Bật Repeater 1-hop cho đúng dev_id này</text>
+
+<line x1="450" y1="562" x2="450" y2="592" stroke="#334155" stroke-width="1.6" marker-end="url(#ar)"/>
+
+<rect x="270" y="594" width="360" height="55" rx="8" fill="#f1f5f9" stroke="#64748b" stroke-width="1.6"/>
+<text x="450" y="626" text-anchor="middle" font-family="Arial, sans-serif" font-size="12.5" font-weight="700" fill="#334155">Đo lại LOSS‰/LINK theo dev_id đó</text>
+
+<line x1="450" y1="649" x2="450" y2="681" stroke="#334155" stroke-width="1.6" marker-end="url(#ar)"/>
+
+<!-- D3 diamond -->
+<polygon points="450,679 610,734 450,789 290,734" fill="#fef9c3" stroke="#ca8a04" stroke-width="1.8"/>
+<text x="450" y="738" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#713f12">Cải thiện đạt chuẩn?</text>
+
+<!-- D3 -> B3 (CÓ) -->
+<line x1="610" y1="734" x2="710" y2="719" stroke="#334155" stroke-width="1.6" marker-end="url(#ar)"/>
+<text x="660" y="709" font-family="Arial, sans-serif" font-size="11" fill="#334155">CÓ</text>
+<rect x="710" y="691" width="260" height="70" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+<text x="840" y="717" text-anchor="middle" font-family="Arial, sans-serif" font-size="12.5" font-weight="700" fill="#14532d">Triển khai chính thức</text>
+<text x="840" y="736" text-anchor="middle" font-family="Arial, sans-serif" font-size="11.5" fill="#166534">+ giám sát định kỳ (phát hiện</text>
+<text x="840" y="752" text-anchor="middle" font-family="Arial, sans-serif" font-size="11.5" fill="#166534">"sống nhờ repeater")</text>
+
+<!-- D3 -> B4 (KHÔNG) -->
+<line x1="450" y1="789" x2="450" y2="819" stroke="#334155" stroke-width="1.6" marker-end="url(#ar)"/>
+<text x="465" y="809" font-family="Arial, sans-serif" font-size="11" fill="#334155">KHÔNG</text>
+
+<rect x="270" y="821" width="360" height="65" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="1.8"/>
+<text x="450" y="847" text-anchor="middle" font-family="Arial, sans-serif" font-size="12.5" font-weight="700" fill="#7f1d1d">Đổi vị trí repeater / khảo sát thêm</text>
+<text x="450" y="865" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#991b1b">vấn đề không chỉ là tầm phát</text>
+
+<!-- legend -->
+<rect x="60" y="905" width="880" height="35" rx="8" fill="#f1f5f9"/>
+<text x="500" y="927" text-anchor="middle" font-family="Arial, sans-serif" font-size="11.5" fill="#334155">Vàng = quyết định (theo ngưỡng TỐT/CHẤP NHẬN/KÉM đã có trong MBW_Test_Procedure.md)　|　Xanh lá = đạt, dừng　|　Amber = bước Repeater　|　Đỏ = cần khảo sát thêm</text>
+</svg>

@@ -146,3 +146,16 @@ void flash_test_rw() {
   SerialDBG.println(memcmp(tx, rx, 16) == 0 ? "FLASH_RW=OK" : "FLASH_RW=FAIL");
   dbg_unlock();
 }
+
+// ----- NET_ID persist (xem giai thich trong flashmem.h) -----
+void net_id_save(uint8_t id) {
+  // flash_write_bytes() tu xoa nguyen sector 4KB truoc khi ghi + tu
+  // khoa/mo g_muSPI rieng (an toan goi tu CLI task).
+  flash_write_bytes(NET_ID_FLASH_ADDR, &id, 1);
+}
+
+uint8_t net_id_load() {
+  uint8_t id = NET_ID_UNSET;
+  flash_read_bytes(NET_ID_FLASH_ADDR, &id, 1);
+  return id;
+}

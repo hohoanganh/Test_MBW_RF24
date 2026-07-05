@@ -29,13 +29,6 @@
       "expect_contains": "RTC:"
     },
     {
-      "key": "rsl",
-      "name": "RS485 loopback (cần nối tắt A-B)",
-      "cmd": "rsl",
-      "expect_contains": "RS485 LOOP OK",
-      "manual_prereq": "Nối tắt chân A-B trên đầu nối RJ11/RS485 của board này. Không cần tắt bridge thủ công: lệnh 'rsl' chạy đồng bộ (chiếm trọn vòng lặp lúc gửi/nhận) nên không xung đột với bridge_process()."
-    },
-    {
       "key": "rf_id",
       "name": "Kiểm tra nRF24L01 có mặt",
       "cmd": "rf id",

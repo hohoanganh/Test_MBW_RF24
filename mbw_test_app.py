@@ -302,7 +302,7 @@ class MbwTestApp:
         self.port_var = tk.StringVar()
         # rong 42 ky tu + kem MO TA thiet bi (USB-SERIAL CH340...) de chon
         # dung cong khi may co nhieu COM
-        combo = ttk.Combobox(card, textvariable=self.port_var, width=42, state="readonly")
+        combo = ttk.Combobox(card, textvariable=self.port_var, width=30, state="readonly")
         combo.grid(row=1, column=0, padx=(10, 4), pady=(0, 10))
         self.combo = combo
 
@@ -319,11 +319,15 @@ class MbwTestApp:
         refresh()
         sec_btn(card, "↻", command=refresh, width=3).grid(row=1, column=1, pady=(0, 10))
 
-        self.status_lbl = tk.Label(card, text="● Chưa kết nối", bg=WHITE, fg=DIS_FG, font=FONT_SM)
-        self.status_lbl.grid(row=1, column=2, padx=8, pady=(0, 10), sticky="w")
-
+        # Nut Connect dat TRUOC label trang thai + label co width CO DINH:
+        # truoc day label doi do dai ("Dang xac thuc..." -> "Da ket noi...")
+        # lam nut Connect bi xo day qua lai
         self.conn_btn = flat_btn(card, "Connect", PRIMARY, PRIMARY_HOV, command=self._toggle_conn)
-        self.conn_btn.grid(row=1, column=3, padx=10, pady=(0, 10))
+        self.conn_btn.grid(row=1, column=2, padx=10, pady=(0, 10))
+
+        self.status_lbl = tk.Label(card, text="● Chưa kết nối", bg=WHITE, fg=DIS_FG,
+                                    font=FONT_SM, width=30, anchor="w")
+        self.status_lbl.grid(row=1, column=3, padx=8, pady=(0, 10), sticky="w")
 
         card.grid_columnconfigure(4, weight=1)
         # Nut mo cong cu Modbus Master that - dat o thanh ket noi (truoc day
@@ -355,15 +359,40 @@ class MbwTestApp:
         self.root.after(300, self._verify_id)
 
     def _verify_id(self):
-        self.link.send("id")
-        line = self.link.wait_for(self.cfg.get("device_id", "MBW_RF24_RS485"), 1.5)
-        if line:
-            self.status_lbl.config(text="● Đã kết nối (%s)" % self.link.port, fg=PASS_FG)
-            self.conn_btn.config(text="Disconnect", bg=SEC_BG, fg=SEC_TX, activebackground=SEC_HOV)
+        """Xac thuc ID o THREAD NEN, thu 3 lan x 2.5s. Truoc day chi cho 1.5s
+        tren GUI thread: khi console dang ngap log FWD (Modbus chay), phan hoi
+        'id' ve tre -> bao 'Sai thiet bi' OAN du cong da mo va app van chay
+        binh thuong."""
+        self.status_lbl.config(text="● Đang xác thực ID...", fg=RUN_FG)
+        self.conn_btn.config(text="Disconnect", bg=SEC_BG, fg=SEC_TX, activebackground=SEC_HOV)
+        threading.Thread(target=self._verify_id_worker, daemon=True).start()
+
+    def _verify_id_worker(self):
+        dev_id = self.cfg.get("device_id", "MBW_RF24_RS485")
+        line = None
+        for _ in range(3):
+            if not self.link.is_open():
+                return
+            self.link.send("id")
+            line = self.link.wait_for(dev_id, 2.5)
+            if line:
+                break
+
+        def apply():
+            if not self.link.is_open():
+                return
+            if line:
+                self.status_lbl.config(text="● Đã kết nối (%s)" % self.link.port, fg=PASS_FG)
+            else:
+                # cong da mo, du lieu van chay - chi la chua doc duoc chuoi ID
+                # (console ban hoac cam nham thiet bi khac)
+                self.status_lbl.config(
+                    text="● %s - CHƯA XÁC NHẬN ID" % self.link.port,
+                    fg=WARN_FG)
             self._refresh_bridge_stat()
             self._schedule_rf_link_poll()
-        else:
-            self.status_lbl.config(text="● Sai thiết bị / không phản hồi", fg=FAIL_FG)
+
+        self.root.after(0, apply)
 
     # ---------- LINE ROUTER (dung chung cho moi tab dang lang nghe) ----------
     def _on_line(self, text):
@@ -920,6 +949,12 @@ class MbwTestApp:
         for g in self.cfg.get("test_groups", []):
             self.tree.insert("", "end", iid=g["key"], values=(g["name"], "chờ", ""), tags=("pend",))
 
+        # Double-click 1 dong = chay RIENG buoc do (debug/kiem lai 1 muc
+        # khong can chay ca chuoi)
+        self.tree.bind("<Double-1>", self._run_single_test)
+        tk.Label(parent, text="(Double-click một dòng để chạy riêng bước đó)",
+                 bg=MAIN_BG, fg=SEC_TX, font=FONT_SM).pack(anchor="w")
+
         self.log = tk.Text(parent, height=6, bg=TERM_BG, fg=TERM_FG, font=FONT_MONO,
                             insertbackground=WHITE)
         self.log.pack(fill="x", pady=(4, 0))
@@ -966,17 +1001,7 @@ class MbwTestApp:
             if prereq:
                 self._log("  (*) Yêu cầu: %s" % prereq)
 
-            try:
-                check = g.get("check")
-                if check in ("rf_hb", "rf_loss"):
-                    # Buoc test RF link can PARSE SO LIEU (khong chi tim chuoi):
-                    # heartbeat 2 chieu / ti le khung mat so voi nguong.
-                    ok, detail = self._test_rf_link_check(check, g)
-                else:
-                    ok, detail = self.link.cmd_and_wait(g["cmd"], g.get("expect_contains"),
-                                                        timeout_s=3.0)
-            except Exception as e:
-                ok, detail = False, "Lỗi: %s" % e
+            ok, detail = self._exec_test_step(g)
 
             self._set_row(key, "PASS" if ok else "FAIL", detail)
             self._log("  -> %s %s" % ("PASS" if ok else "FAIL", detail))
@@ -989,6 +1014,45 @@ class MbwTestApp:
         self.test_running = False
         self._last_result_summary = (pass_count, len(groups))
         self._append_report_row()
+
+    def _exec_test_step(self, g):
+        """Chay 1 buoc test - dung chung cho Run Test (ca chuoi) va
+        double-click (chay rieng)."""
+        try:
+            check = g.get("check")
+            if check in ("rf_hb", "rf_loss"):
+                # Buoc test RF link can PARSE SO LIEU (khong chi tim chuoi):
+                # heartbeat 2 chieu / ti le khung mat so voi nguong.
+                return self._test_rf_link_check(check, g)
+            return self.link.cmd_and_wait(g["cmd"], g.get("expect_contains"),
+                                          timeout_s=3.0)
+        except Exception as e:
+            return False, "Lỗi: %s" % e
+
+    def _run_single_test(self, event=None):
+        """Double-click 1 dong trong bang Factory Test -> chay rieng buoc do."""
+        if self.test_running or not self._require_conn():
+            return
+        iid = self.tree.focus()
+        g = next((x for x in self.cfg.get("test_groups", []) if x["key"] == iid), None)
+        if not g:
+            return
+        self.test_running = True
+        threading.Thread(target=self._run_single_seq, args=(g,), daemon=True).start()
+
+    def _run_single_seq(self, g):
+        self._set_row(g["key"], "RUN")
+        self._log("Chạy riêng: %s" % g["name"])
+        prereq = g.get("manual_prereq")
+        if prereq:
+            self._log("  (*) Yêu cầu: %s" % prereq)
+        self.link.send("bridge log off")  # tranh console ngap FWD lam timeout oan
+        time.sleep(0.4)
+        ok, detail = self._exec_test_step(g)
+        self.link.send("bridge log on")
+        self._set_row(g["key"], "PASS" if ok else "FAIL", detail)
+        self._log("  -> %s %s" % ("PASS" if ok else "FAIL", detail))
+        self.test_running = False
 
     def _test_rf_link_check(self, check, g):
         """2 buoc Factory Test cho RF link (can board doi dien dang bat):

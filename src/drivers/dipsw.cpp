@@ -30,9 +30,9 @@ uint8_t dip_read_raw() {
   return val; // TODO: doi chieu chieu ON/OFF thuc te (switch dong = 0 hay 1?)
 }
 
-uint8_t dip_network_id() {
+uint8_t dip_dev_id() {
   uint8_t raw = dip_read_raw();
-  return raw & 0x3F; // bit0-5 = SW1-6 (gia dinh, xem ghi chu trong dipsw.h)
+  return raw & 0x3F; // bit0-5 = SW1-6 (gia dinh, xem ghi chu trong dipsw.h) - 0=Hub, 1-63=Slave
 }
 
 uint8_t dip_baud_sel() {
@@ -66,7 +66,7 @@ void dip_process() {
     if (v < 0x10)
       SerialDBG.print("0");
     SerialDBG.print(v, HEX);
-    SerialDBG.print(" NETID=");
+    SerialDBG.print(" DEVID=");
     SerialDBG.print(v & 0x3F);
     SerialDBG.print(" BAUD=");
     SerialDBG.println(dip_baud_value());

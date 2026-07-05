@@ -37,17 +37,20 @@ static void print_help() {
   dbg_lock();
   SerialDBG.println("id / ver / help");
   SerialDBG.println("led  (toggle LED_LIFE) / beep on|off");
-  SerialDBG.println("dip  (doc DIP: NETID + BAUD)");
+  SerialDBG.println("dip  (doc DIP: DEVID + BAUD)");
   SerialDBG.println("rs485 <text>  (gui thu RS485)");
   SerialDBG.println("rsl  (loopback RS485, can noi tat A-B)");
   SerialDBG.println("rs485mon on|off  (forward RS485 RX ra console)");
   SerialDBG.println("baud rs485 <1200-921600>");
   SerialDBG.println("flash / fwr  (SPI flash W25Q128)");
   SerialDBG.println("rtc  / rtc set <hh:mm:ss>");
+  SerialDBG.println("net id <0-63>  / net id  (NET_ID chung ca deployment, luu Flash)");
   SerialDBG.println("rf id  (kiem tra nRF24L01 co mat)");
-  SerialDBG.println("rf ch <0-125>  / rf netid <0-63>");
+  SerialDBG.println("rf ch <0-125>  / rf netid <0-63> (doi NET_ID tam thoi, KHONG luu Flash - dung 'net id' de luu)");
   SerialDBG.println("rf tx <text>  (gui khong day, dung ghep cap 2 board)");
-  SerialDBG.println("rf stat / rf reset  (gom ca LINK UP/DOWN, LOSS%, REDUND tu dong)");
+  SerialDBG.println("rf stat / rf reset  (gom ca LINK UP/DOWN, LOSS%, REDUND tu dong, toan mang)");
+  SerialDBG.println("rf devices  (liet ke dev_id da tung nghe thay + UP/DOWN)");
+  SerialDBG.println("rf dev <0-63>  (chi tiet link 1 dev_id rieng)");
   SerialDBG.println("bridge on|off  (mac dinh ON - chuc nang cau RS485<->Wireless that)");
   SerialDBG.println("bridge log on|off  (in dong 'FWD ...' khi relay, mac dinh ON)");
   SerialDBG.println("bridge stat / bridge reset");
@@ -100,13 +103,14 @@ static void cli_execute(char *cmd) {
   // ----- DIP -----
   else if (strcmp(cmd, "dip") == 0) {
     uint8_t v = dip_read_raw();
-    uint8_t netid = dip_network_id();
+    uint8_t dev_id = dip_dev_id();
     uint32_t baud = dip_baud_value();
     dbg_lock();
     SerialDBG.print("DIP: 0x");
     SerialDBG.print(v, HEX);
-    SerialDBG.print(" NETID=");
-    SerialDBG.print(netid);
+    SerialDBG.print(" DEVID=");
+    SerialDBG.print(dev_id);
+    SerialDBG.print(dev_id == 0 ? " (HUB)" : " (SLAVE)");
     SerialDBG.print(" BAUD=");
     SerialDBG.println(baud);
     dbg_unlock();
@@ -187,6 +191,38 @@ static void cli_execute(char *cmd) {
     rtc_print();
   }
 
+  // ----- NET_ID (chung ca deployment, luu Flash - xem flashmem.h/muc 3.2.b) -----
+  else if (strncmp(cmd, "net id", 6) == 0) {
+    int id;
+    bool has_arg = sscanf(cmd, "net id %d", &id) == 1;
+    if (has_arg) {
+      bool valid = id >= 0 && id <= 63;
+      if (valid) {
+        net_id_save((uint8_t)id);   // tu khoa/mo g_muSPI rieng, luu qua Flash
+        rf_set_network_id((uint8_t)id); // ap dung ngay, khong can reset board
+      }
+      dbg_lock();
+      if (valid) {
+        SerialDBG.print("NET_ID=");
+        SerialDBG.print(id);
+        SerialDBG.println(" (da luu Flash)");
+      } else {
+        SerialDBG.println("Usage: net id <0-63>");
+      }
+      dbg_unlock();
+    } else {
+      uint8_t stored = net_id_load(); // tu khoa/mo g_muSPI rieng
+      dbg_lock();
+      if (stored == NET_ID_UNSET) {
+        SerialDBG.println("NET_ID: CHUA CAU HINH - dung \"net id <0-63>\" de set");
+      } else {
+        SerialDBG.print("NET_ID=");
+        SerialDBG.println(stored);
+      }
+      dbg_unlock();
+    }
+  }
+
   // ----- RF -----
   else if (strcmp(cmd, "rf id") == 0) {
     bool ok = rf_ok(); // tu khoa/mo g_muSPI rieng
@@ -240,6 +276,7 @@ static void cli_execute(char *cmd) {
     rf_get_stats(&tx, &rxok, &rxdup, &rxcrc, &rxfrag);
     uint8_t ch = rf_get_channel();
     uint8_t netid = rf_get_network_id();
+    uint8_t devid = rf_get_dev_id();
     uint32_t hbtx, hbrx;
     rf_get_hb_stats(&hbtx, &hbrx);
     bool link_up = rf_link_up();
@@ -262,14 +299,18 @@ static void cli_execute(char *cmd) {
     SerialDBG.print(" RF_CH=");
     SerialDBG.print(ch);
     SerialDBG.print(" RF_NETID=");
-    SerialDBG.println(netid);
+    SerialDBG.print(netid);
+    SerialDBG.print(" RF_DEVID=");
+    SerialDBG.println(devid);
 
-    // ----- Link health (heartbeat) - giong thong so "link quality"/"RSSI" cua
-    // bo telemetry: LINK UP/DOWN, peer, thoi gian tu lan nghe cuoi, ty le mat
-    // uoc luong va do du phong (redundant TX) dang tu dieu chinh -----
+    // ----- Link health (heartbeat) TOAN MANG - giong thong so "link
+    // quality"/"RSSI" cua bo telemetry: LINK UP/DOWN, dev_id nghe thay gan
+    // nhat, thoi gian tu lan nghe cuoi, ty le mat uoc luong va do du phong
+    // (redundant TX) dang tu dieu chinh. Xem "rf devices"/"rf dev <id>" de
+    // biet CHINH XAC tung dev_id dang UP/DOWN (quan trong khi co N>1 slave). -----
     SerialDBG.print("RF_LINK=");
     SerialDBG.print(link_up ? "UP" : "DOWN");
-    SerialDBG.print(" PEER=");
+    SerialDBG.print(" LAST_DEV_ID=");
     SerialDBG.print(peer);
     SerialDBG.print(" AGE_MS=");
     SerialDBG.print(age_ms);
@@ -288,6 +329,46 @@ static void cli_execute(char *cmd) {
     rf_reset_stats();
     dbg_lock();
     SerialDBG.println("OK");
+    dbg_unlock();
+  }
+
+  // ----- RF theo tung dev_id (muc 3.2.e/7.2) - dung de do trung lap dev_id /
+  // thieu Hub luc nghiem thu, va biet CHINH XAC slave nao dang mat song. -----
+  else if (strcmp(cmd, "rf devices") == 0) {
+    dbg_lock();
+    SerialDBG.println("dev_id  role   link  age_ms");
+    for (uint16_t i = 0; i < 64; i++) {
+      uint8_t id = (uint8_t)i;
+      if (!rf_dev_seen(id))
+        continue;
+      SerialDBG.print(id < 10 ? "  " : " ");
+      SerialDBG.print(id);
+      SerialDBG.print(id == 0 ? "     HUB  " : "   SLAVE  ");
+      SerialDBG.print(rf_dev_link_up(id) ? "UP    " : "DOWN  ");
+      SerialDBG.println(rf_dev_age_ms(id));
+    }
+    dbg_unlock();
+  }
+
+  else if (strncmp(cmd, "rf dev", 6) == 0) {
+    int id;
+    bool valid = sscanf(cmd, "rf dev %d", &id) == 1 && id >= 0 && id <= 63;
+    dbg_lock();
+    if (!valid) {
+      SerialDBG.println("Usage: rf dev <0-63>");
+    } else if (!rf_dev_seen((uint8_t)id)) {
+      SerialDBG.print("DEV_ID=");
+      SerialDBG.print(id);
+      SerialDBG.println(" CHUA TUNG NGHE THAY");
+    } else {
+      SerialDBG.print("DEV_ID=");
+      SerialDBG.print(id);
+      SerialDBG.print(id == 0 ? " (HUB)" : " (SLAVE)");
+      SerialDBG.print(" LINK=");
+      SerialDBG.print(rf_dev_link_up((uint8_t)id) ? "UP" : "DOWN");
+      SerialDBG.print(" AGE_MS=");
+      SerialDBG.println(rf_dev_age_ms((uint8_t)id));
+    }
     dbg_unlock();
   }
 

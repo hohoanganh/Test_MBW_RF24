@@ -1,0 +1,122 @@
+<svg viewBox="0 0 1000 760" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>Sơ đồ Pipe/Broadcast domain và Repeater 2 chiều của mạng RF24</title>
+<desc>Hai sơ đồ: A - mọi node dùng chung 1 địa chỉ pipe theo Network ID, hub broadcast poll, mọi slave nhận nhưng chỉ đúng dev_id trả lời. B - repeater relay 2 chiều (poll và response) cho slave ở xa ngoài tầm phát trực tiếp.</desc>
+<defs>
+  <marker id="arrowGrey" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+    <path d="M0,0 L8,4 L0,8 Z" fill="#94a3b8"/>
+  </marker>
+  <marker id="arrowBlue" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+    <path d="M0,0 L8,4 L0,8 Z" fill="#2563eb"/>
+  </marker>
+  <marker id="arrowGreen" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+    <path d="M0,0 L8,4 L0,8 Z" fill="#16a34a"/>
+  </marker>
+  <marker id="arrowDark" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+    <path d="M0,0 L8,4 L0,8 Z" fill="#334155"/>
+  </marker>
+</defs>
+
+<rect x="0" y="0" width="1000" height="760" fill="#ffffff"/>
+
+<!-- ================= PANEL A ================= -->
+<text x="500" y="28" text-anchor="middle" font-family="Arial, sans-serif" font-size="19" font-weight="700" fill="#0f172a">A. Bình thường — mọi node dùng chung 1 địa chỉ Pipe (Network ID)</text>
+
+<rect x="40" y="45" width="920" height="270" rx="16" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="500" y="70" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#475569">Pipe address = f(Network ID) — mọi node (hub + slave) mở cùng địa chỉ này</text>
+
+<!-- Hub -->
+<rect x="420" y="85" width="160" height="58" rx="8" fill="#1e3a5f"/>
+<text x="500" y="108" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" font-weight="700" fill="#ffffff">HUB (Master)</text>
+<text x="500" y="126" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#cbd5e1">dev_id = 0 (Hub)</text>
+
+<!-- Slaves row -->
+<g font-family="Arial, sans-serif">
+  <!-- S1 -->
+  <rect x="65" y="255" width="115" height="52" rx="8" fill="#eef2f7" stroke="#94a3b8" stroke-width="1.2"/>
+  <text x="122" y="277" text-anchor="middle" font-size="12" font-weight="700" fill="#334155">Slave 1</text>
+  <text x="122" y="293" text-anchor="middle" font-size="11" fill="#64748b">dev_id=1</text>
+
+  <!-- S2 -->
+  <rect x="215" y="255" width="115" height="52" rx="8" fill="#eef2f7" stroke="#94a3b8" stroke-width="1.2"/>
+  <text x="272" y="277" text-anchor="middle" font-size="12" font-weight="700" fill="#334155">Slave 2</text>
+  <text x="272" y="293" text-anchor="middle" font-size="11" fill="#64748b">dev_id=2</text>
+
+  <!-- S3 highlighted -->
+  <rect x="365" y="253" width="120" height="56" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <text x="425" y="276" text-anchor="middle" font-size="12" font-weight="700" fill="#14532d">Slave 3 ✓</text>
+  <text x="425" y="293" text-anchor="middle" font-size="11" fill="#166534">dev_id=3 (được hỏi)</text>
+
+  <!-- S4 -->
+  <rect x="520" y="255" width="115" height="52" rx="8" fill="#eef2f7" stroke="#94a3b8" stroke-width="1.2"/>
+  <text x="577" y="277" text-anchor="middle" font-size="12" font-weight="700" fill="#334155">Slave 4</text>
+  <text x="577" y="293" text-anchor="middle" font-size="11" fill="#64748b">dev_id=4</text>
+
+  <text x="700" y="286" text-anchor="middle" font-size="20" fill="#94a3b8">. . .</text>
+
+  <!-- SN -->
+  <rect x="760" y="255" width="120" height="52" rx="8" fill="#eef2f7" stroke="#94a3b8" stroke-width="1.2"/>
+  <text x="820" y="277" text-anchor="middle" font-size="12" font-weight="700" fill="#334155">Slave N</text>
+  <text x="820" y="293" text-anchor="middle" font-size="11" fill="#64748b">dev_id=16</text>
+</g>
+
+<!-- Arrows hub -> slaves (broadcast, all receive) -->
+<line x1="460" y1="143" x2="140" y2="253" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrowGrey)"/>
+<line x1="480" y1="143" x2="285" y2="253" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrowGrey)"/>
+<line x1="500" y1="143" x2="440" y2="251" stroke="#2563eb" stroke-width="2.2" marker-end="url(#arrowBlue)"/>
+<line x1="520" y1="143" x2="590" y2="253" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrowGrey)"/>
+<line x1="545" y1="143" x2="815" y2="253" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrowGrey)"/>
+
+<text x="470" y="200" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#2563eb">poll: hỏi dev_id=3</text>
+
+<!-- response arrow S3 -> hub -->
+<path d="M 410,251 C 410,190 440,160 465,146" fill="none" stroke="#16a34a" stroke-width="2.4" marker-end="url(#arrowGreen)"/>
+<text x="300" y="200" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#16a34a">response (chỉ dev_id=3 trả lời)</text>
+
+<text x="500" y="335" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#64748b" font-style="italic">Slave khác: đều vật lý nhận được poll (chung 1 pipe) nhưng thấy dev_id không khớp → bỏ qua, không trả lời</text>
+
+<!-- ================= PANEL B ================= -->
+<text x="500" y="390" text-anchor="middle" font-family="Arial, sans-serif" font-size="19" font-weight="700" fill="#0f172a">B. Có Repeater hỗ trợ slave ở xa — relay 2 chiều</text>
+
+<!-- direct broken link -->
+<line x1="230" y1="470" x2="770" y2="470" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="6 4"/>
+<circle cx="500" cy="470" r="14" fill="#ffffff" stroke="#dc2626" stroke-width="2"/>
+<text x="500" y="475" text-anchor="middle" font-size="14" fill="#dc2626" font-weight="700">✕</text>
+<text x="500" y="452" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#dc2626" font-weight="700">Ngoài tầm phát trực tiếp</text>
+
+<!-- Hub -->
+<rect x="60" y="500" width="150" height="60" rx="8" fill="#1e3a5f"/>
+<text x="135" y="524" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" font-weight="700" fill="#ffffff">HUB (Master)</text>
+<text x="135" y="542" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#cbd5e1">dev_id=0 (Hub)</text>
+
+<!-- Repeater -->
+<rect x="425" y="500" width="150" height="60" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+<text x="500" y="524" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" font-weight="700" fill="#78350f">REPEATER</text>
+<text x="500" y="542" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#92400e">relay only, hop-1</text>
+
+<!-- Slave xa -->
+<rect x="790" y="500" width="150" height="60" rx="8" fill="#eef2f7" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="865" y="524" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" font-weight="700" fill="#334155">SLAVE xa</text>
+<text x="865" y="542" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#64748b">dev_id=9</text>
+
+<!-- poll path (top): hub -> repeater -> slave -->
+<line x1="210" y1="510" x2="420" y2="510" stroke="#2563eb" stroke-width="2.2" marker-end="url(#arrowBlue)"/>
+<text x="315" y="500" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="700" fill="#2563eb">1. Poll (hop=1)</text>
+
+<line x1="575" y1="510" x2="785" y2="510" stroke="#2563eb" stroke-width="2.2" marker-end="url(#arrowBlue)"/>
+<text x="680" y="500" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="700" fill="#2563eb">2. Poll relay (hop→0)</text>
+
+<!-- response path (bottom): slave -> repeater -> hub -->
+<line x1="790" y1="555" x2="580" y2="555" stroke="#16a34a" stroke-width="2.2" marker-end="url(#arrowGreen)"/>
+<text x="680" y="575" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="700" fill="#16a34a">3. Response (hop=1)</text>
+
+<line x1="420" y1="555" x2="215" y2="555" stroke="#16a34a" stroke-width="2.2" marker-end="url(#arrowGreen)"/>
+<text x="315" y="575" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="700" fill="#16a34a">4. Response relay (hop→0)</text>
+
+<text x="500" y="630" text-anchor="middle" font-family="Arial, sans-serif" font-size="12.5" fill="#334155" font-weight="600">Repeater giữ nguyên dev_id + seq khi relay, chỉ giảm hop-count (TTL) — tránh lặp vô hạn</text>
+<text x="500" y="652" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#64748b" font-style="italic">Bên nhận (hub/slave) coi bản relay như 1 lần gửi lặp bình thường, dùng đúng dedup (dev_id, seq) đã có</text>
+
+<rect x="40" y="685" width="920" height="55" rx="10" fill="#f1f5f9"/>
+<text x="500" y="708" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#334155">Xanh dương = chiều Poll (hub→slave)　|　Xanh lá = chiều Response (slave→hub)　|　Xám nét đứt = broadcast vật lý nhận nhưng không xử lý</text>
+<text x="500" y="726" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#334155">Đỏ nét đứt = liên kết trực tiếp không tới nơi (lý do cần repeater)</text>
+
+</svg>

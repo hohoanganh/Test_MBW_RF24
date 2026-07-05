@@ -39,12 +39,17 @@ biên bản). Có cột KÉM → xử lý (mục cuối) rồi test lại.
 ## 4 luồng test
 
 ### T1 — Factory Test (xưởng, từng board, ~2 phút)
-- Chuẩn bị: nối tắt A-B RS485 (bước loopback); board mẫu thứ 2 cùng NETID bật
-  nguồn trong tầm (2 bước RF); DIP 2 board giống nhau.
-- Tab **Factory Test** → ▶ Run Test: 8 bước (id, dip, flash, rtc, rsl,
+- Chuẩn bị: board mẫu thứ 2 cùng NETID bật nguồn trong tầm (2 bước RF);
+  DIP 2 board giống nhau.
+- Tab **Factory Test** → ▶ Run Test: 7 bước tự động (id, dip, flash, rtc,
   rf id, **RF heartbeat**, **RF khung mất ≤100‰**). App tự tắt log FWD khi
   test, xong bật lại. Bước RF khung mất cần link UP ≥30s trước đó.
-- Đạt: 8/8 PASS → Export Report (`mbw_test_report.xlsx`). FAIL → không xuất.
+- **RS485 kiểm THỦ CÔNG bằng forward** (không dùng loopback nối tắt A-B):
+  tab Giám sát Forward → ô "Gửi thử lên RS485" gõ text → board mẫu đối diện
+  phải hiện dòng `FWD RF→RS485`; hoặc đấu Modbus Master vào cổng RS485 thật
+  và xem khung OK chạy trên bảng cả 2 đầu.
+- Đạt: 7/7 PASS + RS485 forward OK → Export Report (`mbw_test_report.xlsx`).
+  FAIL → không xuất.
 
 ### T2 — Bench test (2 board, 30 phút, trước khi mang đi lắp)
 - Tab **Stress Test**: 30 phút, mẫu 5s, bơm "rf tx (qua RF)" 200ms / 32 byte.

@@ -1,0 +1,75 @@
+<svg viewBox="0 0 1000 720" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>NET_ID cách ly nhiều mạng RS485 Modbus độc lập nằm cạnh nhau</title>
+<desc>Hai mạng Modbus RS485 độc lập (Mạng A với Master A + Slave A1-A3, NET_ID=5; Mạng B với Master B + Slave B1-B3, NET_ID=12) nằm gần nhau, vùng phủ sóng RF chồng lấn nhưng không nghe lẫn nhau vì khác địa chỉ pipe. Tối đa 64 mạng như vậy có thể cùng tồn tại.</desc>
+<defs>
+  <marker id="mA" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 Z" fill="#93c5fd"/></marker>
+  <marker id="mB" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 Z" fill="#c4b5fd"/></marker>
+</defs>
+<rect x="0" y="0" width="1000" height="720" fill="#ffffff"/>
+
+<text x="500" y="30" text-anchor="middle" font-family="Arial, sans-serif" font-size="19" font-weight="700" fill="#0f172a">NET_ID cách ly nhiều mạng RS485 Modbus độc lập nằm cạnh nhau</text>
+
+<!-- Coverage circles -->
+<circle cx="310" cy="390" r="260" fill="#eff6ff" fill-opacity="0.5" stroke="#2563eb" stroke-width="2" stroke-dasharray="8 5"/>
+<circle cx="690" cy="390" r="260" fill="#f5f3ff" fill-opacity="0.5" stroke="#7c3aed" stroke-width="2" stroke-dasharray="8 5"/>
+
+<text x="150" y="110" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#1d4ed8">MẠNG A — NET_ID = 5</text>
+<text x="760" y="110" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#6d28d9">MẠNG B — NET_ID = 12</text>
+
+<text x="500" y="200" text-anchor="middle" font-family="Arial, sans-serif" font-size="12.5" fill="#64748b" font-style="italic">vùng phủ sóng RF chồng lấn</text>
+<text x="500" y="217" text-anchor="middle" font-family="Arial, sans-serif" font-size="12.5" fill="#64748b" font-style="italic">(2 lắp đặt ở gần nhau, cùng dải kênh RF)</text>
+
+<!-- Network A internal connections -->
+<line x1="290" y1="405" x2="145" y2="480" stroke="#93c5fd" stroke-width="1.6" stroke-dasharray="3 3" marker-end="url(#mA)"/>
+<line x1="290" y1="405" x2="275" y2="540" stroke="#93c5fd" stroke-width="1.6" stroke-dasharray="3 3" marker-end="url(#mA)"/>
+<line x1="290" y1="350" x2="145" y2="290" stroke="#93c5fd" stroke-width="1.6" stroke-dasharray="3 3" marker-end="url(#mA)"/>
+
+<!-- Master A -->
+<rect x="220" y="352" width="150" height="58" rx="8" fill="#1e3a5f"/>
+<text x="295" y="376" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" font-weight="700" fill="#ffffff">MASTER A</text>
+<text x="295" y="394" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#cbd5e1">NET_ID = 5</text>
+
+<!-- Slaves A -->
+<rect x="75" y="480" width="110" height="48" rx="7" fill="#dbeafe" stroke="#2563eb" stroke-width="1.4"/>
+<text x="130" y="509" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#1e3a8a">Slave A1</text>
+
+<rect x="205" y="540" width="110" height="48" rx="7" fill="#dbeafe" stroke="#2563eb" stroke-width="1.4"/>
+<text x="260" y="569" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#1e3a8a">Slave A2</text>
+
+<rect x="75" y="252" width="110" height="48" rx="7" fill="#dbeafe" stroke="#2563eb" stroke-width="1.4"/>
+<text x="130" y="281" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#1e3a8a">Slave A3</text>
+
+<!-- Network B internal connections -->
+<line x1="710" y1="405" x2="855" y2="480" stroke="#c4b5fd" stroke-width="1.6" stroke-dasharray="3 3" marker-end="url(#mB)"/>
+<line x1="710" y1="405" x2="725" y2="540" stroke="#c4b5fd" stroke-width="1.6" stroke-dasharray="3 3" marker-end="url(#mB)"/>
+<line x1="710" y1="350" x2="855" y2="290" stroke="#c4b5fd" stroke-width="1.6" stroke-dasharray="3 3" marker-end="url(#mB)"/>
+
+<!-- Master B -->
+<rect x="630" y="352" width="150" height="58" rx="8" fill="#4c1d95"/>
+<text x="705" y="376" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" font-weight="700" fill="#ffffff">MASTER B</text>
+<text x="705" y="394" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#ddd6fe">NET_ID = 12</text>
+
+<!-- Slaves B -->
+<rect x="815" y="480" width="110" height="48" rx="7" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.4"/>
+<text x="870" y="509" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#4c1d95">Slave B1</text>
+
+<rect x="685" y="540" width="110" height="48" rx="7" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.4"/>
+<text x="740" y="569" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#4c1d95">Slave B2</text>
+
+<rect x="815" y="252" width="110" height="48" rx="7" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.4"/>
+<text x="870" y="281" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#4c1d95">Slave B3</text>
+
+<!-- isolation X between the two masters -->
+<line x1="372" y1="381" x2="628" y2="381" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="6 4"/>
+<circle cx="500" cy="381" r="15" fill="#ffffff" stroke="#dc2626" stroke-width="2.2"/>
+<text x="500" y="387" text-anchor="middle" font-size="15" font-weight="700" fill="#dc2626">✕</text>
+<text x="500" y="420" text-anchor="middle" font-family="Arial, sans-serif" font-size="12.5" font-weight="700" fill="#dc2626">Không nghe lẫn nhau</text>
+<text x="500" y="437" text-anchor="middle" font-family="Arial, sans-serif" font-size="11.5" fill="#dc2626">(khác địa chỉ pipe — NET_ID khác nhau)</text>
+
+<!-- bottom callout -->
+<rect x="60" y="615" width="880" height="90" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.3"/>
+<text x="500" y="640" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" font-weight="700" fill="#0f172a">Mỗi NET_ID = 1 mạng Modbus hoàn toàn độc lập, kể cả khi dùng chung kênh RF</text>
+<text x="500" y="663" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#334155">Master A chỉ thấy/hỏi được Slave A — phần cứng nRF24 tự lọc theo địa chỉ pipe (suy từ NET_ID),</text>
+<text x="500" y="683" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#334155">Mạng B hoàn toàn không nhận được khung của Mạng A dù ở ngay cạnh nhau. NET_ID 0-63 → tối đa 64 mạng như vậy cùng tồn tại.</text>
+
+</svg>

@@ -1,2 +1,5 @@
 Links thiết bị
 https://epcb.vn/products/thiet-bi-chuyen-doi-rs485-sang-wicreless-mbw-rf-00-24
+
+Link tham khảo chuẩn truyên RF của Drone Maplink
+https://github.com/hohoanganh/Test_MBW_RF24/blob/main/docs/Notes.txt
