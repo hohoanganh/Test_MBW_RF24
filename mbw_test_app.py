@@ -550,6 +550,16 @@ class MbwTestApp:
         self.lbl_rtc = tk.Label(cfgrow2, text="", bg=MAIN_BG, fg=SEC_TX, font=FONT_SM)
         self.lbl_rtc.pack(side="left", padx=(8, 0))
 
+        # --- Repeater 1-hop (luu Flash) - dat ben phai hang nay ---
+        # (side="right" xep phai->trai nen pack theo thu tu nguoc de nhin dung)
+        self.lbl_repeater = tk.Label(cfgrow2, text="Repeater: ?", bg=MAIN_BG, fg=SEC_TX, font=FONT_SM)
+        self.lbl_repeater.pack(side="right", padx=(8, 0))
+        sec_btn(cfgrow2, "Đọc", command=self._read_repeater).pack(side="right", padx=(0, 4))
+        sec_btn(cfgrow2, "TẮT", command=lambda: self._set_repeater(False)).pack(side="right", padx=(0, 4))
+        sec_btn(cfgrow2, "BẬT", command=lambda: self._set_repeater(True)).pack(side="right", padx=(0, 4))
+        tk.Label(cfgrow2, text="Repeater 1-hop:", bg=MAIN_BG, fg=SEC_TX,
+                 font=FONT_SM).pack(side="right", padx=(12, 4))
+
         # (nut "Modbus Poll Test" da chuyen len thanh "Ket noi board" - truoc
         # day dat o day bi cac o so width co dinh day ra ngoai man hinh)
 
@@ -1020,6 +1030,32 @@ class MbwTestApp:
                 self.lbl_rtc.config(text="giờ board: chưa đặt (lắp pin + đồng bộ)", fg=WARN_FG)
         self.root.after(0, apply)
 
+    # ---------- REPEATER 1-hop (luu Flash) ----------
+    def _set_repeater(self, en):
+        """Gui 'rf repeater on|off' - firmware ap dung ngay + luu Flash."""
+        if not self.link.is_open():
+            self.lbl_repeater.config(text="Repeater: chưa kết nối", fg=FAIL_FG)
+            return
+        self.link.send("rf repeater on" if en else "rf repeater off")
+        self.root.after(500, self._read_repeater)  # doc lai xac nhan
+
+    def _read_repeater(self):
+        if not self.link.is_open():
+            return
+        threading.Thread(target=self._read_repeater_worker, daemon=True).start()
+
+    def _read_repeater_worker(self):
+        self.link.send("rf repeater")
+        line = self.link.wait_for("REPEATER=", 2.5)
+        m = re.search(r"REPEATER=(ON|OFF)", line) if line else None
+        if m:
+            self.root.after(0, lambda: self._apply_repeater_ui(m.group(1) == "ON"))
+
+    def _apply_repeater_ui(self, on):
+        if hasattr(self, "lbl_repeater"):
+            self.lbl_repeater.config(text="Repeater: %s" % ("BẬT ✓" if on else "TẮT"),
+                                     fg=PASS_FG if on else SEC_TX)
+
     # ---------- LOG SU KIEN mat/khoi phuc link (luu Flash) ----------
     def _read_flash_log(self):
         if not self.link.is_open():
@@ -1136,6 +1172,9 @@ class MbwTestApp:
         m = RF_STAT_RE.search(line)
         if not m:
             return
+        rep = re.search(r"REPEATER=(ON|OFF)", line)  # dong rf stat co san REPEATER=
+        if rep:
+            self._apply_repeater_ui(rep.group(1) == "ON")
         up_s, peer, age_ms, loss_pm, redund_s, hb_tx, hb_rx = m.groups()
         up = up_s == "UP"
         loss_pct = int(loss_pm) / 10.0  # phan nghin -> %
