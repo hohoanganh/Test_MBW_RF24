@@ -27,7 +27,13 @@ uint8_t dip_read_raw() {
     digitalWrite(SW_SCK, LOW);
     delayMicroseconds(2);
   }
-  return val; // TODO: doi chieu chieu ON/OFF thuc te (switch dong = 0 hay 1?)
+  // 2026-07-06 - DA DOI CHIEU TREN BOARD THAT: chan 74HC165 co pull-up, gat
+  // switch ON = noi GND -> muc dien 0; OFF = 1. Doc tho all-OFF ra 0xFF
+  // (DEVID=63, BAUD=19200) la SAI quy uoc "DIP de nguyen = 0 = HUB". DAO BIT
+  // tai day de moi noi khac trong firmware dung logic thuan: bit=1 nghia la
+  // switch dang ON (gat ve phia GND); all-OFF -> 0x00 -> DEVID=0 (HUB),
+  // BAUD=4800 (bang chon SW7-8: 00=4800).
+  return (uint8_t)~val;
 }
 
 uint8_t dip_dev_id() {

@@ -36,14 +36,43 @@ bool rtc_set_time(uint8_t hh, uint8_t mm, uint8_t ss) {
   return Wire.endTransmission() == 0;
 }
 
-void rtc_print() {
-  uint8_t hh, mm, ss;
-  char buf[16];
+// Days(0x07), Weekdays(0x08 - bo qua), Months(0x09), Years(0x0A)
+bool rtc_get_date(uint8_t *dd, uint8_t *mo, uint8_t *yy) {
+  Wire.beginTransmission(RTC_ADDR);
+  Wire.write(0x07); // reg Days
+  if (Wire.endTransmission() != 0)
+    return false;
+  if (Wire.requestFrom(RTC_ADDR, 4) != 4)
+    return false;
+  *dd = bcd2dec(Wire.read() & 0x3F); // Days
+  (void)Wire.read();                 // Weekdays - khong dung
+  *mo = bcd2dec(Wire.read() & 0x1F); // Months
+  *yy = bcd2dec(Wire.read());        // Years 00-99
+  return true;
+}
 
-  if (rtc_get_time(&hh, &mm, &ss))
-    snprintf(buf, sizeof(buf), "%02u:%02u:%02u", hh, mm, ss);
+bool rtc_set_date(uint8_t dd, uint8_t mo, uint8_t yy) {
+  Wire.beginTransmission(RTC_ADDR);
+  Wire.write(0x07);
+  Wire.write(dec2bcd(dd)); // Days
+  Wire.write(dec2bcd(0));  // Weekdays - de 0
+  Wire.write(dec2bcd(mo)); // Months
+  Wire.write(dec2bcd(yy)); // Years
+  return Wire.endTransmission() == 0;
+}
+
+void rtc_print() {
+  uint8_t hh, mm, ss, dd, mo, yy;
+  char buf[32];
+  bool okt = rtc_get_time(&hh, &mm, &ss);
+  bool okd = rtc_get_date(&dd, &mo, &yy);
+
+  if (okt && okd)
+    snprintf(buf, sizeof(buf), "%02u/%02u/%02u %02u:%02u:%02u", dd, mo, yy, hh, mm, ss);
+  else if (okt)
+    snprintf(buf, sizeof(buf), "--/--/-- %02u:%02u:%02u", hh, mm, ss);
   else
-    strcpy(buf, "--:--:--");
+    strcpy(buf, "--/--/-- --:--:--");
 
   dbg_lock();
   SerialDBG.print("RTC: ");

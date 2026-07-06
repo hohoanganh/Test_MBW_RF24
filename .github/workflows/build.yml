@@ -1,0 +1,78 @@
+name: Build firmware (PlatformIO)
+
+# Chay tren GitHub-hosted runner (mang day du, KHONG bi proxy chan nhu moi
+# truong sandbox cua Claude) - build that bang PlatformIO moi lan push/PR,
+# bao loi ngay tren tab "Actions" cua repo thay vi phai doi build tay.
+on:
+  push:
+    paths:
+      - "src/**"
+      - "boards/**"
+      - "platformio.ini"
+      - ".github/workflows/build.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "boards/**"
+      - "platformio.ini"
+      - ".github/workflows/build.yml"
+  workflow_dispatch: # cho phep bam nut "Run workflow" thu cong tren GitHub
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Cache thu muc PlatformIO (platform/toolchain/lib da tai) giua cac lan
+      # chay - lan dau se cham (tai toolchain STM32 + framework), tu lan 2 tro
+      # di nhanh hon nhieu vi khong phai tai lai.
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            pio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      # platformio.ini co "workspace_dir = C:\pio_ws\mbw_rf24" (duong dan
+      # Windows, chi de tranh OneDrive khoa file .o cu tren may user - xem ghi
+      # chu trong platformio.ini). Tren runner Linux nay, ghi de bang bien moi
+      # truong PLATFORMIO_WORKSPACE_DIR de build ra dung ".pio/" chuan (khong
+      # doi platformio.ini, khong anh huong build tay cua user tren Windows).
+      - name: Build firmware (pio run)
+        env:
+          PLATFORMIO_WORKSPACE_DIR: .pio
+        run: pio run
+
+      # In dung luong Flash/RAM su dung sau build - xem ngay trong log Actions
+      # de doi chieu voi ngan sach 64KB Flash / 10KB RAM cua STM32L151C8T6
+      # (khong can doi upload artifact ve doc rieng).
+      - name: Report firmware size
+        if: always()
+        env:
+          PLATFORMIO_WORKSPACE_DIR: .pio
+        run: pio run --target size || true
+
+      # Luu firmware.elf/.bin lam artifact de tai ve kiem tra/nap thu neu can,
+      # khong bat buoc cho muc dich chi xac nhan build OK/FAIL.
+      - name: Upload firmware artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mbw_rf24-firmware
+          path: |
+            .pio/build/mbw_rf24/firmware.elf
+            .pio/build/mbw_rf24/firmware.bin
+          if-no-files-found: ignore

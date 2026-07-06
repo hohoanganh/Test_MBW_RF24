@@ -79,14 +79,24 @@ FWD_RE = re.compile(r"^FWD (RS485->RF|RF->RS485): (\d+) bytes:(.*)$")
 # 2 dong tuc thoi khi link doi trang thai:
 LINK_UP_RE = re.compile(r"^RF LINK: UP \(peer=(\d+)\)")
 LINK_DOWN_RE = re.compile(r"^RF LINK: DOWN \(peer=(\d+), (\d+)ms")
-# dong "rf stat" day du (doc dinh ky) chua ca so lieu dinh luong:
+# dong "rf stat" day du (doc dinh ky) chua ca so lieu dinh luong.
+# 2026-07-06: firmware in "LAST_DEV_ID=" (truoc day la "PEER=") va co them
+# "REPEATER=ON|OFF RELAY=<n>" sau HB_RX (khong anh huong regex - khong anchor
+# cuoi dong). Chap nhan CA 2 ten truong de tuong thich firmware cu/moi.
 RF_STAT_RE = re.compile(
-    r"RF_LINK=(UP|DOWN)\s+PEER=(\d+)\s+AGE_MS=(\d+)\s+LOSS_PROMILLE=(\d+)\s+"
+    r"RF_LINK=(UP|DOWN)\s+(?:PEER|LAST_DEV_ID)=(\d+)\s+AGE_MS=(\d+)\s+LOSS_PROMILLE=(\d+)\s+"
     r"REDUND=(\d+)\s+HB_TX=(\d+)\s+HB_RX=(\d+)")
 # dong dem goi RF ("rf stat" in truoc dong RF_LINK=):
 RF_CNT_RE = re.compile(
     r"RF_TX=(\d+)\s+RF_RX_OK=(\d+)\s+RF_RX_DUP=(\d+)\s+RF_RX_CRCERR=(\d+)\s+"
     r"RF_RX_FRAGDROP=(\d+)")
+# dong "RF_DEVS:" (breakdown tung dev_id trong "rf stat") - biet CON NAO ROT /
+# CON NAO LINK KEM. Moi token dang "<id>:<UP|DOWN>(<age>s,<loss%o | ->)".
+RF_DEVS_RE = re.compile(r"^RF_DEVS:")
+DEV_TOKEN_RE = re.compile(r"(\d+):(UP|DOWN)\((\d+)s,(-|\d+)\)")
+# dong log su kien tu Flash: "LOG: <idx> dd/mm hh:mm:ss dev=<id> UP|DOWN loss=<n%|->"
+LOG_LINE_RE = re.compile(
+    r"^LOG:\s+(\d+)\s+(\d\d/\d\d)\s+(\d\d:\d\d:\d\d)\s+dev=(\d+)\s+(UP|DOWN)\s+loss=(\S+)")
 # dong "bridge stat" (dem khung forward + drop queue lien-task):
 BR_CNT_RE = re.compile(
     r"BRIDGE=(?:ON|OFF)\s+LOG=(?:ON|OFF)\s+RS485_TO_RF=(\d+)\s+RF_TO_RS485=(\d+)\s+"
@@ -391,6 +401,8 @@ class MbwTestApp:
                     fg=WARN_FG)
             self._refresh_bridge_stat()
             self._schedule_rf_link_poll()
+            self._read_net_id()  # dien san NET_ID hien tai vao o cau hinh
+            self._read_rtc()     # hien gio RTC hien tai cua board
 
         self.root.after(0, apply)
 
@@ -399,6 +411,7 @@ class MbwTestApp:
         m = FWD_RE.match(text)
         m_up = LINK_UP_RE.match(text)
         m_down = LINK_DOWN_RE.match(text)
+        m_devs = RF_DEVS_RE.match(text)
 
         def apply():
             if hasattr(self, "raw_log"):
@@ -416,8 +429,49 @@ class MbwTestApp:
                 self._apply_link_ui(True, m_up.group(1))
             elif m_down:
                 self._apply_link_ui(False, m_down.group(1))
+            if m_devs:
+                self._seen_rf_devs = True  # firmware moi co in RF_DEVS
+                self._update_dev_panel(text)
 
         self.root.after(0, apply)
+
+    def _update_dev_panel(self, line):
+        """Cap nhat 16 O CO DINH (dev_id 1..16) tu dong RF_DEVS: chi doi mau +
+        text moi o, KHONG tao/xoa widget (nen luon hien, khong bi trong).
+        Do = DOWN / loss >10%, cam = kha 2-10%, xanh = tot <2%, xam = chua nghe thay."""
+        if not hasattr(self, "dev_cells"):
+            return
+        toks = DEV_TOKEN_RE.findall(line)
+        seen = {int(d): (u, a, l) for d, u, a, l in toks if int(d) <= self.DEV_MAX}
+        # Tieu de: dem so con k/n + so con mat link
+        if hasattr(self, "lbl_dev_hdr"):
+            n = len(toks)
+            n_down = sum(1 for _d, u, _a, _l in toks if u != "UP")
+            extra = (" — %d DOWN" % n_down) if n_down else ""
+            self.lbl_dev_hdr.config(
+                text="Thiết bị kết nối: %d con%s  (số %% = tỷ lệ mất gói, càng nhỏ càng tốt)"
+                     % (n, extra))
+        for dev_id, (cell, lid, lsub) in self.dev_cells.items():
+            if dev_id not in seen:
+                bg, fg, sub = self.DEV_NEUTRAL, DIS_FG, "—"  # chua nghe thay
+            else:
+                updown, age, loss = seen[dev_id]
+                if updown != "UP":
+                    bg, fg, sub = FAIL_FG, WHITE, "DOWN"
+                elif loss == "-":
+                    bg, fg, sub = "#E9EDF1", INK, "-- %"  # chua du du lieu loss
+                else:
+                    lp = int(loss) / 10.0  # %o -> %
+                    if lp < 2:
+                        bg, fg = PASS_FG, WHITE
+                    elif lp <= 10:
+                        bg, fg = WARN_FG, INK
+                    else:
+                        bg, fg = FAIL_FG, WHITE
+                    sub = "%.1f%%" % lp
+            cell.config(bg=bg)
+            lid.config(bg=bg, fg=fg)
+            lsub.config(bg=bg, fg=fg, text=sub)
 
     # ---------- TABS ----------
     def _build_tabs(self):
@@ -468,6 +522,34 @@ class MbwTestApp:
         self.lbl_err.pack(side="left", padx=(4, 0))
         self._fwd_hist = collections.deque(maxlen=1200)  # (t, dem RS485->RF, dem RF->RS485)
 
+        # --- Cau hinh board: NET ID (chung 1 mang, luu Flash - giu qua mat nguon) ---
+        cfgrow = tk.Frame(parent, bg=MAIN_BG)
+        cfgrow.pack(fill="x", pady=(0, 4))
+        tk.Label(cfgrow, text="Net ID (chung cho cả mạng):", bg=MAIN_BG, fg=SEC_TX,
+                 font=FONT_SM).pack(side="left")
+        self.net_id_var = tk.StringVar(value="")
+        tk.Spinbox(cfgrow, from_=0, to=63, width=4, textvariable=self.net_id_var,
+                   font=FONT_SM).pack(side="left", padx=(4, 4))
+        sec_btn(cfgrow, "Đọc ID", command=self._read_net_id).pack(side="left", padx=(0, 4))
+        sec_btn(cfgrow, "Set & Lưu Flash", command=self._set_net_id).pack(side="left")
+        self.lbl_net_id = tk.Label(cfgrow, text="", bg=MAIN_BG, fg=SEC_TX, font=FONT_SM)
+        self.lbl_net_id.pack(side="left", padx=(8, 0))
+        # Log su kien mat/khoi phuc link luu Flash
+        sec_btn(cfgrow, "Xóa log", command=self._clear_flash_log).pack(side="right")
+        sec_btn(cfgrow, "📋 Đọc log sự kiện (Flash)",
+                command=self._read_flash_log).pack(side="right", padx=(0, 6))
+
+        # --- Dong ho RTC (moc thoi gian cho log; can lap pin CR1220 de giu gio) ---
+        cfgrow2 = tk.Frame(parent, bg=MAIN_BG)
+        cfgrow2.pack(fill="x", pady=(0, 4))
+        tk.Label(cfgrow2, text="Đồng hồ RTC (mốc thời gian cho log):", bg=MAIN_BG,
+                 fg=SEC_TX, font=FONT_SM).pack(side="left")
+        sec_btn(cfgrow2, "⏱ Đồng bộ giờ máy tính",
+                command=self._sync_rtc_pc).pack(side="left", padx=(6, 4))
+        sec_btn(cfgrow2, "Đọc giờ", command=self._read_rtc).pack(side="left")
+        self.lbl_rtc = tk.Label(cfgrow2, text="", bg=MAIN_BG, fg=SEC_TX, font=FONT_SM)
+        self.lbl_rtc.pack(side="left", padx=(8, 0))
+
         # (nut "Modbus Poll Test" da chuyen len thanh "Ket noi board" - truoc
         # day dat o day bi cac o so width co dinh day ra ngoai man hinh)
 
@@ -504,10 +586,45 @@ class MbwTestApp:
         qbot = tk.Frame(qcard, bg=WHITE)
         qbot.pack(fill="x", padx=10, pady=(0, 6))
         self.lbl_rf_link_detail = tk.Label(
-            qbot, text="(nRF24L01 không có RSSI - đánh giá theo % mất heartbeat + mức dự phòng)",
+            qbot, text="(đánh giá theo % mất heartbeat + mức dự phòng)",
             bg=WHITE, fg=SEC_TX, font=FONT_SM)
         self.lbl_rf_link_detail.pack(side="left")
         sec_btn(qbot, "Đọc ngay (rf stat)", command=self._refresh_rf_link_stat).pack(side="right")
+        sec_btn(qbot, "Reset % mất gói (rf reset)",
+                command=self._reset_rf_stats).pack(side="right", padx=(0, 6))
+
+        # --- Breakdown TUNG dev_id: con nao ROT (DOWN) / con nao LINK KEM (loss cao) ---
+        # Dong RF_LINK= toan cuc luon UP neu con nghe duoc BAT KY ai; panel nay
+        # chi ro tung thiet bi. Mau: xanh=tot(<2%), cam=kha(2-10%), do=kem(>10%)/DOWN.
+        qdev = tk.Frame(qcard, bg=WHITE)
+        qdev.pack(fill="x", padx=10, pady=(0, 10))
+        self.lbl_dev_hdr = tk.Label(
+            qdev, text="Thiết bị kết nối (số % = tỷ lệ mất gói, càng nhỏ càng tốt):",
+            bg=WHITE, fg=SEC_TX, font=FONT_SM)
+        self.lbl_dev_hdr.pack(anchor="w")
+        self.dev_panel = tk.Frame(qdev, bg=WHITE)
+        self.dev_panel.pack(fill="x", pady=(5, 0))
+        # 16 O CO DINH (dev_id 1..16) tao SAN 1 lan, luon hien thi. Cap nhat chi
+        # doi mau + text (khong tao/xoa dong) - chac chan hien, khong bi trong.
+        self.DEV_MAX = 16
+        self.DEV_NEUTRAL = "#EEF1F4"
+        self.dev_cells = {}
+        _cols = 8
+        _rowf = None
+        for _idx in range(self.DEV_MAX):
+            _dev_id = _idx + 1
+            if _idx % _cols == 0:
+                _rowf = tk.Frame(self.dev_panel, bg=WHITE)
+                _rowf.pack(anchor="w")
+            _cell = tk.Frame(_rowf, bg=self.DEV_NEUTRAL, bd=1, relief="solid")
+            _cell.pack(side="left", padx=3, pady=3)
+            _lid = tk.Label(_cell, text="#%d" % _dev_id, bg=self.DEV_NEUTRAL, fg=DIS_FG,
+                            font=("Segoe UI", 15, "bold"), width=3, padx=6)
+            _lid.pack(pady=(4, 0))
+            _lsub = tk.Label(_cell, text="—", bg=self.DEV_NEUTRAL, fg=DIS_FG,
+                             font=("Segoe UI", 10, "bold"), width=6)
+            _lsub.pack(pady=(0, 5))
+            self.dev_cells[_dev_id] = (_cell, _lid, _lsub)
 
         # --- gui thu RS485 de tu kiem tra forward khi chua co Modbus that ---
         send_row = tk.Frame(parent, bg=MAIN_BG)
@@ -835,6 +952,176 @@ class MbwTestApp:
         self._rf_q_busy = True
         threading.Thread(target=self._rf_link_query_worker, daemon=True).start()
 
+    # ---------- NET ID (cau hinh chung 1 mang, luu Flash) ----------
+    def _set_net_id(self):
+        """Gui 'net id <n>' - firmware luu Flash + ap dung ngay (khong can reset)."""
+        if not self.link.is_open():
+            self.lbl_net_id.config(text="chưa kết nối board", fg=FAIL_FG)
+            return
+        try:
+            n = int(self.net_id_var.get().strip())
+        except ValueError:
+            self.lbl_net_id.config(text="ID không hợp lệ", fg=FAIL_FG)
+            return
+        if not (0 <= n <= 63):
+            self.lbl_net_id.config(text="ID phải 0–63", fg=FAIL_FG)
+            return
+        self.lbl_net_id.config(text="đang lưu...", fg=SEC_TX)
+        threading.Thread(target=self._net_id_worker, args=("net id %d" % n, n), daemon=True).start()
+
+    def _read_net_id(self):
+        """Doc NET_ID hien tai tu board (khi vua ket noi) de dien san vao o."""
+        if not self.link.is_open():
+            return
+        threading.Thread(target=self._net_id_worker, args=("net id", None), daemon=True).start()
+
+    def _net_id_worker(self, cmd, set_val):
+        self.link.send(cmd)
+        line = self.link.wait_for("NET_ID", 2.5)
+        m = re.search(r"NET_ID=(\d+)", line) if line else None
+        def apply():
+            if set_val is not None:  # lenh SET
+                ok = m is not None and int(m.group(1)) == set_val
+                self.lbl_net_id.config(
+                    text=("✓ NET_ID=%d (đã lưu Flash)" % set_val) if ok else "lỗi / không phản hồi",
+                    fg=PASS_FG if ok else FAIL_FG)
+            elif m:                  # lenh DOC
+                self.net_id_var.set(m.group(1))
+                self.lbl_net_id.config(text="hiện tại: %s" % m.group(1), fg=SEC_TX)
+        self.root.after(0, apply)
+
+    # ---------- DONG HO RTC (moc thoi gian cho log) ----------
+    def _sync_rtc_pc(self):
+        """Gui 'rtc set hh:mm:ss' theo gio may tinh -> board luu vao chip RTC
+        PCF85063 (co pin CR1220 nuoi thi giu qua mat nguon)."""
+        if not self.link.is_open():
+            self.lbl_rtc.config(text="chưa kết nối board", fg=FAIL_FG)
+            return
+        now = datetime.now()
+        self.link.send("rtc set %02d/%02d/%02d %02d:%02d:%02d" % (
+            now.day, now.month, now.year % 100, now.hour, now.minute, now.second))
+        self.lbl_rtc.config(text="đã đồng bộ %02d/%02d %02d:%02d:%02d..." % (
+            now.day, now.month, now.hour, now.minute, now.second), fg=SEC_TX)
+        self.root.after(700, self._read_rtc)  # doc lai xac nhan
+
+    def _read_rtc(self):
+        if not self.link.is_open():
+            return
+        threading.Thread(target=self._read_rtc_worker, daemon=True).start()
+
+    def _read_rtc_worker(self):
+        self.link.send("rtc")
+        line = self.link.wait_for("RTC:", 2.5)
+        m = re.search(r"RTC:\s*(\d\d/\d\d/\d\d)\s+(\d\d:\d\d:\d\d)", line) if line else None
+        def apply():
+            if m:
+                self.lbl_rtc.config(text="giờ board: %s %s ✓" % (m.group(1), m.group(2)), fg=PASS_FG)
+            elif line:  # co dong RTC nhung la "--/--/-- --:--:--" (chua dat / mat pin)
+                self.lbl_rtc.config(text="giờ board: chưa đặt (lắp pin + đồng bộ)", fg=WARN_FG)
+        self.root.after(0, apply)
+
+    # ---------- LOG SU KIEN mat/khoi phuc link (luu Flash) ----------
+    def _read_flash_log(self):
+        if not self.link.is_open():
+            return
+        threading.Thread(target=self._read_flash_log_worker, daemon=True).start()
+
+    def _read_flash_log_worker(self):
+        start_idx = self.link.snapshot_len()
+        self.link.send("log")
+        t0 = time.time()
+        done = False
+        while time.time() - t0 < 5.0 and not done:
+            for ln in self.link.lines_since(start_idx):
+                if ln.startswith("LOG_END"):
+                    done = True
+                    break
+            time.sleep(0.05)
+        rows = []
+        for ln in self.link.lines_since(start_idx):
+            if ln.startswith("LOG_END"):
+                break
+            m = LOG_LINE_RE.match(ln)
+            if m:
+                rows.append(m.groups())  # (idx, time, dev, evt, loss)
+        self.root.after(0, lambda: self._show_log_window(rows))
+
+    def _show_log_window(self, rows):
+        win = tk.Toplevel(self.root)
+        win.title("Log sự kiện mất link RF (lưu Flash)")
+        win.configure(bg=WHITE)
+        win.geometry("640x480")
+        topbar = tk.Frame(win, bg=WHITE)
+        topbar.pack(fill="x", padx=10, pady=(8, 4))
+        tk.Label(topbar, text="DOWN = mất link. Ngày/giờ theo RTC của board. Tổng: %d sự kiện" % len(rows),
+                 bg=WHITE, fg=SEC_TX, font=FONT_SM).pack(side="left")
+        sec_btn(topbar, "💾 Lưu ra file (.log/.csv)",
+                command=lambda: self._save_log_file(rows)).pack(side="right")
+        cols = ("idx", "date", "time", "dev", "evt", "loss")
+        tv = ttk.Treeview(win, columns=cols, show="headings")
+        for _c, _t, _w in [("idx", "#", 45), ("date", "Ngày", 80), ("time", "Giờ (RTC)", 90),
+                           ("dev", "dev_id", 70), ("evt", "Sự kiện", 110), ("loss", "Loss lúc đó", 90)]:
+            tv.heading(_c, text=_t)
+            tv.column(_c, width=_w, anchor="center")
+        tv.tag_configure("down", foreground=FAIL_FG)
+        tv.tag_configure("up", foreground=PASS_FG)
+        for idx, dt, tm, dev, evt, loss in rows:
+            tv.insert("", "end",
+                      values=(idx, dt, tm, dev, "MẤT LINK" if evt == "DOWN" else "Khôi phục", loss),
+                      tags=("down" if evt == "DOWN" else "up",))
+        tv.pack(fill="both", expand=True, padx=10, pady=(0, 8))
+        if not rows:
+            tk.Label(win, text="(chưa có sự kiện nào trong Flash)",
+                     bg=WHITE, fg=DIS_FG, font=FONT_SM).pack(pady=6)
+
+    def _save_log_file(self, rows):
+        """Luu log ra file .log (text) hoac .csv (mo Excel duoc)."""
+        path = filedialog.asksaveasfilename(
+            defaultextension=".log",
+            filetypes=[("Log text", "*.log"), ("CSV (Excel)", "*.csv"), ("Text", "*.txt")],
+            initialfile="mbw_rf24_log")
+        if not path:
+            return
+        try:
+            is_csv = path.lower().endswith(".csv")
+            with open(path, "w", encoding="utf-8-sig") as f:
+                if is_csv:
+                    f.write("STT,Ngay,Gio,dev_id,Su kien,Loss\n")
+                    for idx, dt, tm, dev, evt, loss in rows:
+                        f.write("%s,%s,%s,%s,%s,%s\n" % (
+                            idx, dt, tm, dev, "MAT LINK" if evt == "DOWN" else "Khoi phuc", loss))
+                else:
+                    f.write("# MBW RF24 - Log su kien mat link RF (Flash), %d su kien\n" % len(rows))
+                    for idx, dt, tm, dev, evt, loss in rows:
+                        f.write("[%s] %s %s  dev=%s  %s  loss=%s\n" % (
+                            idx, dt, tm, dev, "MAT LINK" if evt == "DOWN" else "Khoi phuc", loss))
+            messagebox.showinfo(APP_TITLE, "Đã lưu %d sự kiện:\n%s" % (len(rows), path))
+        except Exception as e:
+            messagebox.showerror(APP_TITLE, "Không lưu được file:\n%s" % e)
+
+    def _clear_flash_log(self):
+        if not self.link.is_open():
+            return
+        if not messagebox.askyesno(APP_TITLE, "Xóa TOÀN BỘ log sự kiện trong Flash?\n(không khôi phục được)"):
+            return
+        self.link.send("log clear")
+
+    def _reset_rf_stats(self):
+        """Gui 'rf reset' - xoa bo dem % mat goi de bat dau CUA SO DO MOI cho
+        test (moi thiet bi phat 1 heartbeat/giay; cho >=10s roi doc lai)."""
+        if not self.link.is_open():
+            return
+        self.link.send("rf reset")
+        self._seen_rf_devs = False  # cho firmware in lai RF_DEVS voi so lieu moi
+        if hasattr(self, "dev_cells"):
+            for _cell, _lid, _lsub in self.dev_cells.values():
+                _cell.config(bg=self.DEV_NEUTRAL)
+                _lid.config(bg=self.DEV_NEUTRAL, fg=DIS_FG)
+                _lsub.config(bg=self.DEV_NEUTRAL, fg=DIS_FG, text="…")
+        if hasattr(self, "lbl_q_loss"):
+            self.lbl_q_loss.config(text="--", fg=DIS_FG)
+        self.root.after(1200, self._refresh_rf_link_stat)  # doc lai sau 1 nhip
+
     def _rf_link_query_worker(self):
         try:
             self.link.send("rf stat")
@@ -859,6 +1146,14 @@ class MbwTestApp:
 
         self._apply_link_ui(up, peer)
 
+        # FALLBACK: neu firmware CU (chua in dong "RF_DEVS:") thi panel dev_id se
+        # trong. Tam dung so lieu toan cuc tu "rf stat" de it nhat hien THIET BI
+        # DANG NGHE (peer) - nap firmware moi se co breakdown day du tung dev_id.
+        if not getattr(self, "_seen_rf_devs", False):
+            synth = "RF_DEVS: %s:%s(%ss,%s)" % (
+                peer, "UP" if up else "DOWN", int(age_ms) // 1000, loss_pm)
+            self._update_dev_panel(synth)
+
         # Mat goi: <2%% xanh (TOT) / 2-10%% vang (KHA) / >10%% do (KEM)
         loss_fg = PASS_FG if loss_pct < 2 else (WARN_FG if loss_pct < 10 else FAIL_FG)
         self.lbl_q_loss.config(text="%.1f %%" % loss_pct, fg=loss_fg if up else DIS_FG)
@@ -880,8 +1175,7 @@ class MbwTestApp:
         self.lbl_q_rate.config(text=rate, fg=rate_fg)
 
         self.lbl_rf_link_detail.config(
-            text="peer=%s | gói heartbeat cuối %sms trước | ngưỡng: TỐT <2%% mất & dự phòng ≤3x, "
-                 "KHÁ <10%% & ≤5x, còn lại KÉM (nRF24L01 không có RSSI)" % (peer, age_ms))
+            text="peer=%s | heartbeat cuối %sms trước" % (peer, age_ms))
 
     def _apply_link_ui(self, up, peer):
         self.lbl_rf_link.config(

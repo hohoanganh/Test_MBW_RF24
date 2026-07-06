@@ -22,7 +22,9 @@
 
 void dip_init();
 
-uint8_t dip_read_raw(); // 8-bit tho, bit=1 khi switch o vi tri ON
+uint8_t dip_read_raw(); // 8-bit LOGIC: bit=1 khi switch o vi tri ON (ON = noi GND;
+                        // phan cung doc nguoc do pull-up, da DAO BIT san ben trong -
+                        // 2026-07-06, doi chieu tren board that: all-OFF = 0x00 = HUB)
 
 uint8_t dip_dev_id();     // 0-63, tu SW1-6: 0=Hub, 1-63=Slave (RF dev_id, KHONG phai dia chi Modbus)
 uint8_t dip_baud_sel();   // 0-3, tu SW7-8

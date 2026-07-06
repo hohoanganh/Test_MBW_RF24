@@ -10,13 +10,18 @@
 // =========================================================
 
 // ===== FIRMWARE VERSION =====
-#define FW_VERSION "0.1.0"
+// 0.2.0 (2026-07-06): toi uu lap dat 1 hub + 16 slave - redundant TX co dinh
+// (bo auto-adapt toan cuc), LOSS%o theo tung dev_id, REPEATER 1-hop (byte hop
+// trong khung -> DOI CAU TRUC KHUNG, moi board phai nap cung phien ban nay),
+// bridge log mac dinh OFF. Xem README +
+// docs/Dinh_Huong_Mo_Rong_64_Node_ModbusRTU.md.
+#define FW_VERSION "0.2.0"
 
 // ===== DEVICE ID (van tay de app test xac thuc dung thiet bi) =====
 #define DEVICE_ID "MBW_RF24_RS485"
 
 // ===== BAUDRATE =====
-#define DBG_BAUD 115200      // Console USART1, CO DINH
+#define DBG_BAUD 115200 // Console USART1, CO DINH
 #define RS485_BAUD_DEFAULT 9600
 
 // ===== CONSOLE (USART1) =====
@@ -52,8 +57,8 @@
 #define RTC_ADDR 0x51
 
 // ===== LED, Buzzer, nut nhan =====
-#define LED_LIFE PB8  // LED trang thai 2 mau (qua Q4)
-#define BUZZER PB0    // qua Q1, active-high
+#define LED_LIFE PB8 // LED trang thai 2 mau (qua Q4)
+#define BUZZER PB0   // qua Q1, active-high
 #define BUZZER_ON_LEVEL HIGH
 #define BUZZER_OFF_LEVEL LOW
 #define USER_BTN PA11 // nut nhan S2, INPUT_PULLUP (khong phai NRST)

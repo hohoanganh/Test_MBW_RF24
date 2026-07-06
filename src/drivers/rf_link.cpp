@@ -1,5 +1,7 @@
 #include "rf_link.h"
 #include "drv_common.h"
+#include "flashmem.h" // flashlog_append: ghi su kien MAT LINK vao Flash
+#include "rtc.h"      // rtc_get_time: dong dau thoi gian cho su kien log
 #include "../mbw_common.h"
 #include "../rtos_glue.h"
 #include <RF24.h>
@@ -11,7 +13,9 @@
 // (public) dung tren SPI - cac ham static noi bo (send_one_frame, apply_address...)
 // luon duoc goi TU BEN TRONG 1 ham cong khai da khoa san, khong khoa long nhau.
 
-#define RF_MAX_FRAG 10 // toi da 10 manh x 25 byte = 250 byte ~ Modbus RTU max thuc te
+#define RF_MAX_FRAG 11 // toi da 11 manh x 24 byte = 264 byte >= 250 byte Modbus RTU max
+                       // (2026-07-06: chunk giam 25->24 do them byte hop vao header,
+                       // tang so manh 10->11 de van chua du khung Modbus dai nhat)
 
 static RF24 radio(RF_CE, RF_CSN);
 
@@ -24,6 +28,11 @@ static uint8_t s_tx_seq = 0;
 static uint32_t s_tx_cnt = 0, s_rx_ok_cnt = 0, s_rx_dup_cnt = 0, s_rx_crcerr_cnt = 0, s_rx_fragdrop_cnt = 0;
 
 // ----- Heartbeat / Link health -----
+// 2026-07-06: s_redundant_tx nay la GIA TRI CO DINH (mac dinh 3, doi bang CLI
+// "rf redund <2-6>") - DA BO thuat toan tu tang/giam theo link toan mang vi
+// voi 16 slave cung 1 NET_ID no bi "trung binh hoa" (muc 3.1 tai lieu dinh
+// huong): giay nao hub cung nghe duoc AI DO -> luon thay "link tot", khong
+// bao gio tang du phong cho dung slave xa dang rot nang.
 static uint8_t s_redundant_tx = RF_REDUNDANT_TX_DEFAULT;
 static uint32_t s_hb_last_tx_ms = 0;
 static uint32_t s_last_rx_ms = 0;       // lan cuoi nhan duoc BAT KY khung hop le nao
@@ -32,14 +41,15 @@ static uint8_t s_peer_id = 0;
 static uint32_t s_hb_tx_cnt = 0, s_hb_rx_cnt = 0;
 
 // Danh gia chat luong theo tung "ky" RF_HB_PERIOD_MS: ky nao khong nhan duoc
-// gi tinh la 1 lan "mat trang" -> dung de vua uoc luong ty le mat, vua lam
-// dieu kien tang/giam so lan gui lap (redundant TX) tu dong.
+// gi tinh la 1 lan "mat trang" -> uoc luong ty le mat TOAN MANG (chi con dung
+// cho chan doan "rf stat", KHONG con dieu khien redundant TX nua).
 static uint32_t s_period_start_ms = 0;
 static bool s_period_had_rx = false;
 static uint32_t s_period_ok_cnt = 0, s_period_miss_cnt = 0;
-static uint8_t s_period_ok_streak = 0, s_period_miss_streak = 0;
-#define RF_ADAPT_MISS_STREAK 2  // mat lien tiep 2 ky -> tang do du phong
-#define RF_ADAPT_OK_STREAK 5    // tot lien tiep 5 ky -> giam do du phong
+
+// ----- REPEATER 1-hop (muc 6) -----
+static bool s_repeater = false;   // bat qua CLI "rf repeater on" / giu nut S2 3s
+static uint32_t s_relay_cnt = 0;  // so khung (dev_id,seq) DA relay
 
 // ----- Heartbeat / Link health THEO TUNG dev_id (2026-07-04/05, muc 3.3/7.1) -----
 // Mang CO DINH cho CA 64 dev_id (RF_MAX_DEV) tu dau, du hien tai chi 16 slave
@@ -49,6 +59,18 @@ static uint8_t s_period_ok_streak = 0, s_period_miss_streak = 0;
 static uint16_t s_dev_last_seen_s[RF_MAX_DEV]; // giay ke tu boot, 0 = CHUA TUNG thay dev_id nay
 #define DEV_BITMAP_BYTES ((RF_MAX_DEV + 7) / 8)
 static uint8_t s_dev_link_up_bitmap[DEV_BITMAP_BYTES]; // bit=1: dev_id dang UP
+
+// ----- LOSS%o THEO TUNG dev_id (2026-07-06, muc 7.2): dem heartbeat NHAN
+// DUOC tu tung dev_id (sau dedup - moi heartbeat goc tinh 1 du gui lap nhieu
+// lan), so voi so giay troi qua ke tu "rf reset" (moi thiet bi phat dung 1
+// heartbeat/giay) -> ty le mat rieng tung thiet bi, khong bi "trung binh hoa"
+// nhu LOSS toan mang. Chi phi RAM: 64 x uint16 = 128 byte + 2 byte moc chung.
+// Dung 1 MOC CHUNG (s_stats_start_s, dat lai khi rf_reset_stats()) thay vi
+// luu "first seen" rieng tung thiet bi (-128 byte RAM) - danh doi: thiet bi
+// len nguon SAU lan reset bi tinh loss cao gia tao, nen quy trinh do la
+// "cap nguon du board -> rf reset -> cho >= 60s -> rf devices". -----
+static uint16_t s_dev_hb_rx[RF_MAX_DEV]; // so heartbeat da nhan tu dev_id nay (bao hoa o 0xFFFF)
+static uint16_t s_stats_start_s = 0;     // moc bat dau cua so do (giay ke tu boot)
 
 static inline bool dev_bitmap_get(const uint8_t *bm, uint8_t dev_id) {
   return (bm[dev_id >> 3] & (uint8_t)(1u << (dev_id & 7))) != 0;
@@ -126,6 +148,8 @@ void rf_init(uint8_t channel, uint8_t net_id, uint8_t dev_id) {
   memset(s_dev_seq_known_bitmap, 0, sizeof(s_dev_seq_known_bitmap));
   memset(s_dev_last_seen_s, 0, sizeof(s_dev_last_seen_s));
   memset(s_dev_link_up_bitmap, 0, sizeof(s_dev_link_up_bitmap));
+  memset(s_dev_hb_rx, 0, sizeof(s_dev_hb_rx));
+  s_stats_start_s = (uint16_t)(millis() / 1000);
   reasm_dev = 0xFF;
   s_msg_ready = false;
 
@@ -198,6 +222,7 @@ bool rf_send(const uint8_t *data, uint16_t len) {
     frame.frag_idx = f;
     frame.frag_total = frag_total;
     frame.len = chunk_len;
+    frame.hop = RF_HOP_DEFAULT; // cho phep repeater (neu co) relay toi da 1 lan
     memcpy(frame.payload, data + off, chunk_len);
     frame.crc16 = crc16_modbus((const uint8_t *)&frame, RF_HDR_LEN + chunk_len);
 
@@ -227,6 +252,7 @@ static void send_heartbeat_frame() {
   frame.frag_idx = 0xFF;
   frame.frag_total = 0;
   frame.len = 0;
+  frame.hop = RF_HOP_DEFAULT; // heartbeat cung duoc relay - hub van thay slave xa "song" qua repeater
   frame.crc16 = crc16_modbus((const uint8_t *)&frame, RF_HDR_LEN);
 
   // Heartbeat gui thua (mat 1 cai khong sao, ky sau se gui lai) nen chi can
@@ -280,9 +306,12 @@ static void note_link_alive(uint8_t dev_id) {
     if (!dev_was_up) {
       dev_bitmap_set(s_dev_link_up_bitmap, dev_id, true);
       dbg_lock();
-      SerialDBG.print("RF LINK: UP (dev_id=");
+      SerialDBG.print(">>> RF LINK UP: dev_id=");
       SerialDBG.print(dev_id);
-      SerialDBG.println(")");
+      SerialDBG.print(dev_id == 0 ? " (HUB)" : " (SLAVE)");
+      SerialDBG.print(" @ ");
+      SerialDBG.print((uint32_t)(millis() / 1000));
+      SerialDBG.println("s uptime");
       dbg_unlock();
     }
   }
@@ -302,12 +331,23 @@ static void scan_dev_link_timeout() {
     if (age_s >= RF_LINK_TIMEOUT_S) {
       dev_bitmap_set(s_dev_link_up_bitmap, dev_id, false);
       dbg_lock();
-      SerialDBG.print("RF LINK: DOWN (dev_id=");
+      SerialDBG.print("!!! CANH BAO - MAT SONG: dev_id=");
       SerialDBG.print(dev_id);
-      SerialDBG.print(", ");
+      SerialDBG.print(dev_id == 0 ? " (HUB)" : " (SLAVE)");
+      SerialDBG.print(" - ");
       SerialDBG.print(age_s);
-      SerialDBG.println("s khong nhan duoc gi)");
+      SerialDBG.println("s khong nhan duoc gi !!!");
       dbg_unlock();
+      // Ghi su kien MAT LINK ra Flash (chay tu rf_heartbeat_tick - NGOAI khoa
+      // g_muSPI nen flashlog_append tu khoa g_muSPI duoc, khong deadlock).
+      {
+        uint8_t hh = 0, mm = 0, ss = 0, dd = 0, mo = 0, yy = 0;
+        rtc_get_time(&hh, &mm, &ss);
+        rtc_get_date(&dd, &mo, &yy);
+        uint16_t lp = rf_dev_loss_permille(dev_id);
+        flashlog_append(hh, mm, ss, dd, mo, dev_id, FLASHLOG_EVT_DOWN,
+                        lp == 0xFFFF ? 0xFF : (uint8_t)(lp / 10 > 100 ? 100 : lp / 10));
+      }
     }
   }
 }
@@ -339,37 +379,17 @@ static void rf_heartbeat_tick() {
   scan_dev_link_timeout();
 
   // 3) Cu moi ky RF_HB_PERIOD_MS: danh gia ky do "tot" (co nhan) hay "mat
-  // trang" (khong nhan gi) -> tich luy ty le mat + tu dong tang/giam do du
-  // phong (redundant TX). Day la phan "toi uu forward it mat goi" chinh:
-  // link cang nhieu/xau -> tu tang so lan gui lap; link on dinh tro lai ->
-  // giam ve muc binh thuong de khong chiem kenh/ton dien qua muc can thiet.
+  // trang" (khong nhan gi) -> tich luy ty le mat TOAN MANG cho "rf stat".
+  // 2026-07-06: DA BO tu dong tang/giam redundant TX theo cac ky nay (bi
+  // "trung binh hoa" khi 16 slave cung phat - muc 3.1 tai lieu dinh huong);
+  // do du phong nay CO DINH (RF_REDUNDANT_TX_DEFAULT, doi bang "rf redund").
+  // Muon biet THIET BI NAO rot, dung LOSS%o theo tung dev_id ("rf devices").
   if ((uint32_t)(now - s_period_start_ms) >= RF_HB_PERIOD_MS) {
     s_period_start_ms = now;
-    if (s_period_had_rx) {
+    if (s_period_had_rx)
       s_period_ok_cnt++;
-      s_period_miss_streak = 0;
-      s_period_ok_streak++;
-      if (s_period_ok_streak >= RF_ADAPT_OK_STREAK && s_redundant_tx > RF_REDUNDANT_TX_MIN) {
-        s_redundant_tx--;
-        s_period_ok_streak = 0;
-        dbg_lock();
-        SerialDBG.print("RF: link on dinh, giam do du phong con ");
-        SerialDBG.println(s_redundant_tx);
-        dbg_unlock();
-      }
-    } else {
+    else
       s_period_miss_cnt++;
-      s_period_ok_streak = 0;
-      s_period_miss_streak++;
-      if (s_period_miss_streak >= RF_ADAPT_MISS_STREAK && s_redundant_tx < RF_REDUNDANT_TX_MAX) {
-        s_redundant_tx++;
-        s_period_miss_streak = 0;
-        dbg_lock();
-        SerialDBG.print("RF: link kem, tang do du phong len ");
-        SerialDBG.println(s_redundant_tx);
-        dbg_unlock();
-      }
-    }
     s_period_had_rx = false;
   }
 }
@@ -383,7 +403,33 @@ static void reasm_reset(uint8_t dev_id, uint8_t total) {
   memset(reasm_buf, 0, sizeof(reasm_buf));
 }
 
+// Phat lai 1 khung vua nhan (che do REPEATER, muc 6): giu NGUYEN dev_id/seq
+// goc (ben nhan cuoi coi ban relay nhu 1 lan "gui lap" binh thuong, dedup san
+// co tu loc trung), CHI giam hop di 1 va tinh lai CRC (CRC phu ca truong hop).
+// Duoc goi TU BEN TRONG handle_frame() khi RF task DANG GIU g_muSPI - khong
+// khoa them. Chi relay ban DAU TIEN cua moi (dev_id,seq): dedup o
+// handle_frame() da loai cac ban lap truoc khi toi day, nen khong xay ra
+// "nhan relay theo so lan gui lap cua node goc" (nguyen tac 3 muc 6).
+static void relay_frame(const rf_frame_t *src) {
+  rf_frame_t frame = *src;
+  frame.hop--;
+  frame.crc16 = crc16_modbus((const uint8_t *)&frame, RF_HDR_LEN + frame.len);
+  for (uint8_t r = 0; r < RF_RELAY_TX; r++) {
+    send_one_frame(&frame);
+    s_tx_cnt++;
+    delayMicroseconds(300);
+  }
+  s_relay_cnt++;
+}
+
 static void handle_frame(const rf_frame_t *f) {
+  // Chan len rac TRUOC khi tinh CRC: len > RF_CHUNK_MAX se lam crc16_modbus()
+  // doc vuot ra ngoai struct 32 byte tren stack (khung nhieu/gia co the mang
+  // len bat ky 0-255).
+  if (f->len > RF_CHUNK_MAX) {
+    s_rx_crcerr_cnt++;
+    return;
+  }
   uint16_t hdr_and_payload = RF_HDR_LEN + f->len;
   uint16_t calc = crc16_modbus((const uint8_t *)f, hdr_and_payload);
   if (calc != f->crc16) {
@@ -391,10 +437,24 @@ static void handle_frame(const rf_frame_t *f) {
     return;
   }
 
+  // Loai khung mang CHINH dev_id cua minh: khi co repeater, ban relay khung
+  // do minh phat se quay lai tai minh (radio khong tu nghe minh phat, nhung
+  // NGHE DUOC ban phat lai cua repeater) - khong loai o day thi hub se forward
+  // nguoc chinh cau poll cua no ra RS485 lam hong giao dich Modbus.
+  if (f->dev_id == s_dev_id)
+    return;
+
   if (dedup_check_and_update(f->dev_id, f->seq)) {
     s_rx_dup_cnt++;
-    return; // ban sao gui lap (redundant TX) - da xu ly roi
+    return; // ban sao gui lap (redundant TX / ban relay cua repeater) - da xu ly roi
   }
+
+  // ----- REPEATER (muc 6): relay DOI XUNG moi khung cua node khac (ca poll
+  // hub->slave, response slave->hub, lan heartbeat) khi con hop. Dat SAU dedup
+  // (chi relay ban dau tien cua moi (dev_id,seq)) va TRUOC moi xu ly ung dung
+  // (repeater van dong thoi la 1 bridge binh thuong). -----
+  if (s_repeater && f->hop > 0)
+    relay_frame(f);
 
   // Bat ky khung hop le nao (du lieu that hay heartbeat) deu chung to link
   // dang song -> cap nhat "lan nghe cuoi" phuc vu phat hien LINK UP/DOWN va
@@ -405,6 +465,10 @@ static void handle_frame(const rf_frame_t *f) {
   if (f->frag_idx == 0xFF) {
     // Khung dieu khien HEARTBEAT - khong phai du lieu Modbus, dung xong la thoi.
     s_hb_rx_cnt++;
+    // Dem rieng theo dev_id de tinh LOSS%o tung thiet bi (muc 7.2) - bao hoa
+    // o 0xFFFF (0xFFFF con la ma "chua du du lieu" cua rf_dev_loss_permille).
+    if (f->dev_id < RF_MAX_DEV && s_dev_hb_rx[f->dev_id] < 0xFFFE)
+      s_dev_hb_rx[f->dev_id]++;
     return;
   }
 
@@ -496,6 +560,12 @@ void rf_reset_stats() {
   s_tx_cnt = s_rx_ok_cnt = s_rx_dup_cnt = s_rx_crcerr_cnt = s_rx_fragdrop_cnt = 0;
   s_hb_tx_cnt = s_hb_rx_cnt = 0;
   s_period_ok_cnt = s_period_miss_cnt = 0;
+  s_relay_cnt = 0;
+  // Dat lai cua so do LOSS%o theo tung dev_id (muc 7.2): xoa bo dem heartbeat
+  // + lay moc thoi gian moi. Quy trinh do dung: cap nguon du board -> rf reset
+  // -> cho >= 60s -> rf devices.
+  memset(s_dev_hb_rx, 0, sizeof(s_dev_hb_rx));
+  s_stats_start_s = (uint16_t)(millis() / 1000);
   // KHONG reset s_link_up/s_last_rx_ms/s_redundant_tx: day la trang thai
   // "dang song" cua link, khong phai bo dem thong ke tich luy.
 }
@@ -505,6 +575,19 @@ bool rf_link_up() { return s_link_up; }
 uint8_t rf_link_peer_id() { return s_peer_id; }
 uint32_t rf_link_age_ms() { return (uint32_t)(millis() - s_last_rx_ms); }
 uint8_t rf_get_redundancy() { return s_redundant_tx; }
+
+void rf_set_redundancy(uint8_t n) {
+  if (n < RF_REDUNDANT_TX_MIN)
+    n = RF_REDUNDANT_TX_MIN;
+  if (n > RF_REDUNDANT_TX_MAX)
+    n = RF_REDUNDANT_TX_MAX;
+  s_redundant_tx = n; // gan byte don - nguyen tu tren Cortex-M, khong can khoa
+}
+
+// ----- REPEATER 1-hop (muc 6) -----
+void rf_set_repeater(bool en) { s_repeater = en; }
+bool rf_is_repeater() { return s_repeater; }
+uint32_t rf_get_relay_cnt() { return s_relay_cnt; }
 
 // ----- Heartbeat / Link health THEO TUNG dev_id (muc 3.3/7.1) -----
 bool rf_dev_seen(uint8_t dev_id) {
@@ -530,4 +613,19 @@ uint16_t rf_get_loss_permille() {
 void rf_get_hb_stats(uint32_t *hb_tx, uint32_t *hb_rx) {
   if (hb_tx) *hb_tx = s_hb_tx_cnt;
   if (hb_rx) *hb_rx = s_hb_rx_cnt;
+}
+
+// LOSS%o THEO TUNG dev_id (muc 7.2) - xem quy trinh do dung trong rf_link.h.
+uint16_t rf_dev_loss_permille(uint8_t dev_id) {
+  if (dev_id >= RF_MAX_DEV || !rf_dev_seen(dev_id))
+    return 0xFFFF; // chua tung thay -> khong co so lieu
+  uint16_t now_s = (uint16_t)(millis() / 1000);
+  uint16_t elapsed = (uint16_t)(now_s - s_stats_start_s); // wrap-safe
+  if (elapsed < 10)
+    return 0xFFFF; // cua so do qua ngan, so lieu chua co y nghia
+  uint16_t expected = elapsed; // moi thiet bi phat 1 heartbeat/giay
+  uint16_t got = s_dev_hb_rx[dev_id];
+  if (got >= expected)
+    return 0; // nhan du (hoac hon do lech dong ho vai nhip) -> khong mat
+  return (uint16_t)(((uint32_t)(expected - got) * 1000UL) / expected);
 }

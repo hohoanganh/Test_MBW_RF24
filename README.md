@@ -112,6 +112,12 @@ kích thước khung — dùng lại đúng vị trí byte đầu tiên trước
 NET_ID không nằm trong payload vì đã ẩn sẵn trong địa chỉ pipe RF — mọi khung
 nhận được trên 1 pipe chắc chắn cùng NET_ID.
 
+**2026-07-06 (FW 0.2.0):** thêm 1 byte `hop` vào header (phục vụ Repeater
+1-hop, xem mục dưới) — header 5→6 byte, dữ liệu mỗi khung 25→24 byte, số mảnh
+tối đa 10→11 (11×24=264 ≥ 250 byte khung Modbus dài nhất, không mất tính
+năng). **Đổi cấu trúc khung nghĩa là MỌI board trong cùng 1 mạng phải nạp
+cùng phiên bản firmware này** — khung của firmware cũ sẽ bị loại bởi CRC.
+
 **Trước khi lắp đặt nhiều board:** chạy `net id <n>` (cùng giá trị cho Hub +
 mọi Slave), gạt DIP `dev_id` không trùng nhau trên từng board (Hub để mặc định
 `0`), rồi dùng `rf devices` để xác nhận đúng 1 Hub + không trùng `dev_id` trước
@@ -241,8 +247,9 @@ làm ở lớp ứng dụng (`rf_link.cpp`), phía trên RF24:
 | `RF24_PA_MAX` + RFX2401C | PA/LNA ngoài khuếch đại thêm tầm phát/thu (TXEN/RXEN đấu cứng theo CE trên schematic, không cần GPIO riêng). |
 | `RF24_CRC_16` (phần cứng) + CRC16-MODBUS (phần mềm) | 2 lớp kiểm tra toàn vẹn — loại gói lỗi mà nRF24 tự CRC có thể bỏ sót khi nhiễu mạnh. |
 | Payload **cố định 32 byte** (không dynamic payload) | Bớt một lớp "bắt tay" giữa 2 đầu — ít điểm có thể lỗi khi tín hiệu yếu. |
-| **Tắt auto-ack/auto-retry phần cứng**, tự gửi lặp lại (mặc định 3 lần, **tự động 2-6 lần**) + lọc trùng theo `(dev_id, seq)` | Đây là kênh **broadcast** (nhiều thiết bị cùng NET_ID cùng nghe 1 địa chỉ) — ACK 1-1 không hợp lệ khi có nhiều bên nhận. Gửi lặp lại không cần ACK vẫn tăng xác suất tới nơi trong môi trường nhiễu. Lọc trùng khóa theo `dev_id` **riêng từng board** (không phải theo Network ID chung như thiết kế cũ) — xem mục "Kiến trúc mạng: DEV_ID vs NET_ID". |
-| **Heartbeat + đo chất lượng link** (lấy ý tưởng từ bộ telemetry MAVLink/SiK radio) | Mỗi board tự phát 1 khung điều khiển nhỏ mỗi giây (không đụng vào dữ liệu Modbus) để bên kia biết "còn sống"; nếu quá 3s không nhận được gì (kể cả dữ liệu thật) thì báo `RF LINK: DOWN`. Tỷ lệ "kỳ mất trắng" đo được dùng để **tự tăng số lần gửi lặp khi link kém, tự giảm khi link ổn định trở lại** — tối ưu độ tin cậy mà không tốn băng thông khi không cần thiết. |
+| **Tắt auto-ack/auto-retry phần cứng**, tự gửi lặp lại (**cố định, mặc định 3 lần** — 2026-07-06) + lọc trùng theo `(dev_id, seq)` | Đây là kênh **broadcast** (nhiều thiết bị cùng NET_ID cùng nghe 1 địa chỉ) — ACK 1-1 không hợp lệ khi có nhiều bên nhận. Gửi lặp lại không cần ACK vẫn tăng xác suất tới nơi trong môi trường nhiễu. Lọc trùng khóa theo `dev_id` **riêng từng board**. **Đã BỎ auto-adapt số lần gửi lặp theo link toàn mạng** (mục 3.1 tài liệu thiết kế: với 16 slave, giây nào cũng có ai đó phát → thuật toán luôn thấy "link tốt", không bao giờ tăng dự phòng cho đúng slave xa đang rớt — bị "trung bình hóa"). Giá trị cố định chỉnh được lúc bench test bằng `rf redund <2-6>`. |
+| **Heartbeat + đo chất lượng link** (lấy ý tưởng từ bộ telemetry MAVLink/SiK radio) | Mỗi board tự phát 1 khung điều khiển nhỏ mỗi giây (không đụng vào dữ liệu Modbus) để bên kia biết "còn sống"; nếu quá 3s không nhận được gì (kể cả dữ liệu thật) thì báo `RF LINK: DOWN`. **LOSS‰ đo riêng theo từng `dev_id`** (2026-07-06, xem `rf devices`) — biết chính xác thiết bị nào rớt nhiều để tối ưu vật lý hoặc bật repeater đúng chỗ. |
+| **Repeater 1-hop** (2026-07-06, mục 6 tài liệu thiết kế) | Board bật `rf repeater on` (hoặc giữ nút S2 3 giây) phát lại khung của node KHÁC đúng 1 lần (byte `hop` trong header giảm 1 mỗi lần relay, hết hop không relay tiếp — chống lặp vô hạn). Relay đối xứng cả 2 chiều (poll lẫn response, cả heartbeat), giữ nguyên `dev_id`/`seq` gốc nên bên nhận coi như 1 lần "gửi lặp" bình thường, dedup sẵn có tự lọc. Chỉ relay bản ĐẦU TIÊN của mỗi `(dev_id, seq)` — không nhân relay theo số lần gửi lặp của node gốc. |
 
 ### Heartbeat + giám sát chất lượng link RF
 
@@ -266,17 +273,24 @@ hiệu nhận biết, không thể trùng với khung dữ liệu thật). Cơ c
   `rf dev <id>` (1 thiết bị). Để tiết kiệm RAM (chip chỉ 10KB), mốc thời gian
   theo từng `dev_id` lưu ở độ phân giải **giây** (không phải mili-giây như
   trạng thái toàn mạng) — đủ dùng vì ngưỡng timeout là 3 giây.
-- **Redundant TX tự thích ứng**: cứ mỗi chu kỳ 1 giây không nhận được gì tính
-  là 1 "kỳ mất trắng" — 2 kỳ mất liên tiếp thì tự tăng số lần gửi lặp (tối đa
-  6 lần); 5 kỳ tốt liên tiếp thì tự giảm về mức thấp hơn (tối thiểu 2 lần) để
-  đỡ chiếm kênh khi link đã ổn định. In log `RF: link kém, tăng độ dự phòng
-  lên N` / `RF: link ổn định, giảm độ dự phòng còn N` mỗi lần đổi. Thuật toán
-  này vẫn tính TOÀN MẠNG (chưa tách theo `dev_id`) — xem tài liệu thiết kế mục
-  3.3 về lý do và hướng làm sau này nếu cần.
+- **Redundant TX cố định** (2026-07-06 — thay cho "tự thích ứng" trước đây):
+  số lần gửi lặp giữ nguyên 1 giá trị đã kiểm chứng (mặc định 3), đổi lúc
+  bench test bằng `rf redund <2-6>` (chỉ RAM, về mặc định sau reset). Lý do bỏ
+  auto-adapt: với 16 slave cùng NET_ID, chỉ số "kỳ mất trắng" toàn mạng gần
+  như luôn tốt (ai đó luôn đang phát) nên thuật toán không bao giờ tăng dự
+  phòng cho đúng slave yếu — số liệu sai còn tệ hơn giá trị cố định. Lớp bảo
+  vệ cuối vẫn là timeout/retry của Modbus master (khuyến nghị 1000-1500ms,
+  ≥1500ms khi có repeater).
+- **LOSS‰ theo từng `dev_id`** (2026-07-06, mục 7.2 tài liệu thiết kế): đếm
+  heartbeat nhận được từ từng thiết bị so với số giây trôi qua từ lần
+  `rf reset` gần nhất (mỗi thiết bị phát đúng 1 heartbeat/giây). Quy trình đo:
+  cấp nguồn đủ mọi board → `rf reset` → chờ ≥60s → `rf devices` (cột `loss%o`).
+  Ngưỡng theo `MBW_Test_Procedure.md`: TỐT <20‰, CHẤP NHẬN 20-100‰, KÉM >100‰.
 - Lệnh `rf stat` hiển thị đầy đủ: `RF_LINK=UP|DOWN LAST_DEV_ID=<id> AGE_MS=<n>
-  LOSS_PROMILLE=<n> REDUND=<n> HB_TX=<n> HB_RX=<n> RF_NETID=<n> RF_DEVID=<n>`
-  (trạng thái toàn mạng + NET_ID/DEV_ID của chính board). Dùng `rf devices` /
-  `rf dev <id>` để xem trạng thái UP/DOWN **theo từng thiết bị**.
+  LOSS_PROMILLE=<n> REDUND=<n> HB_TX=<n> HB_RX=<n> REPEATER=ON|OFF RELAY=<n>
+  RF_NETID=<n> RF_DEVID=<n>` (trạng thái toàn mạng + NET_ID/DEV_ID của chính
+  board). Dùng `rf devices` / `rf dev <id>` để xem UP/DOWN + LOSS‰ **theo
+  từng thiết bị**.
 - App test (`mbw_test_app.py`, tab Giám sát Forward) có nhãn **RF Link** hiển
   thị UP/DOWN theo thời gian thực (đọc dòng log tức thời) + nút "Đọc RF Link
   (rf stat)" để xem % mất và độ dự phòng hiện tại — tự động làm mới mỗi 3 giây
@@ -300,17 +314,42 @@ hiệu nhận biết, không thể trùng với khung dữ liệu thật). Cơ c
 | `rf ch <0-125>` | Đặt kênh RF (mặc định 120, vùng tránh WiFi 1-11) |
 | `rf netid <0-63>` | Ghi đè NET_ID **tạm thời** (chỉ trong RAM, KHÔNG lưu Flash) — dùng `net id` ở trên để lưu vĩnh viễn |
 | `rf tx <text>` | Gửi 1 bản tin không dây thủ công (kỹ thuật viên tự kiểm tra RF thô, cần `bridge off` tạm thời) |
-| `rf stat` / `rf reset` | Thống kê TX/RX OK/trùng/lỗi CRC/rớt mảnh + kênh/NET_ID/DEV_ID + **LINK UP/DOWN toàn mạng, % mất, độ dự phòng tự thích ứng** |
-| `rf devices` | Liệt kê mọi `dev_id` **đã từng nghe thấy** + vai trò (HUB/SLAVE) + UP/DOWN + số giây từ lần nghe cuối — dò trùng lặp `dev_id`/thiếu Hub lúc nghiệm thu |
-| `rf dev <0-63>` | Xem chi tiết link **1 `dev_id` riêng lẻ** (UP/DOWN + số giây từ lần nghe cuối) |
+| `rf stat` / `rf reset` | Thống kê TX/RX OK/trùng/lỗi CRC/rớt mảnh + kênh/NET_ID/DEV_ID + **LINK UP/DOWN toàn mạng, % mất, REDUND cố định, REPEATER/RELAY**. `rf reset` đồng thời đặt lại cửa sổ đo LOSS‰ theo dev_id |
+| `rf devices` | Liệt kê mọi `dev_id` **đã từng nghe thấy** + vai trò (HUB/SLAVE) + UP/DOWN + số giây từ lần nghe cuối + **LOSS‰ riêng từng thiết bị** — dò trùng lặp `dev_id`/thiếu Hub lúc nghiệm thu, tìm slave yếu lúc khảo sát |
+| `rf dev <0-63>` | Xem chi tiết link **1 `dev_id` riêng lẻ** (UP/DOWN + số giây từ lần nghe cuối + LOSS‰) |
+| `rf redund <2-6>` | Đổi số lần gửi lặp **cố định** lúc bench test (chỉ RAM, mặc định 3 sau reset) |
+| `rf repeater on\|off` / `rf repeater` | Bật/tắt **chế độ Repeater 1-hop** (lưu Flash, giữ qua mất nguồn) — hoặc **giữ nút S2 3 giây** (LED nháy 3 lần, bíp dài=BẬT/ngắn=TẮT, không cần laptop) |
 | `bridge on\|off` | Tạm BẬT/TẮT chức năng cầu RS485⇄Wireless (**mặc định ON ngay khi cấp nguồn**) |
-| `bridge log on\|off` | Bật/tắt in dòng `FWD ...` khi relay (**mặc định ON**, app đọc dòng này để hiển thị) |
+| `bridge log on\|off` | Bật/tắt in dòng `FWD ...` khi relay (**mặc định OFF từ FW 0.2.0** — bật khi test/quan sát bằng app) |
 | `bridge stat` / `bridge reset` | Thống kê số khung đã relay 2 chiều + trạng thái bridge/log + số khung bị rớt do hàng đợi liên-task đầy (`DROP_RS485_TO_RF`/`DROP_RF_TO_RS485`) |
 | `rtos stat` | RAM heap còn trống (`xPortGetFreeHeapSize`) + stack còn trống từng task RS485/RF/CLI — kiểm tra ngân sách RAM RTOS trên phần cứng thật |
 | `wdt stat` | Trạng thái watchdog IWDG: lần khởi động trước có bị reset do treo máy không (`WDT_BOOT_WAS_RESET`), đang được feed hay sắp reset (`WDT_FEEDING`), tuổi điểm danh từng task — xem mục "Watchdog (IWDG)" |
 
 Khi `bridge off`, mọi bản tin RF nhận được sẽ tự in ra console dạng
 `RF RX: <nội dung>` — dùng để kiểm tra RF thô giữa 2 board mà không qua bridge.
+
+### Quy trình lắp đặt 1 Hub + 16 Slave & khi nào bật Repeater (2026-07-06)
+
+1. **Chuẩn bị từng board:** nạp cùng FW 0.2.0 cho MỌI board (đổi cấu trúc
+   khung — không trộn firmware cũ/mới); `net id <n>` cùng giá trị cho cả
+   deployment; gạt DIP `dev_id`: board nối Master để nguyên (0=Hub), board nối
+   slave gạt 1..16 không trùng nhau.
+2. **T0 — nghiệm thu mạng:** trên board Hub chạy `rf devices` — phải thấy đủ
+   16 slave UP, đúng 1 Hub, không trùng `dev_id`.
+3. **Đo chất lượng từng link:** `rf reset` → chờ ≥60s → `rf devices`, đọc cột
+   `loss%o` từng slave (TỐT <20‰ / CHẤP NHẬN 20-100‰ / KÉM >100‰).
+4. **Slave nào KÉM:** tối ưu vật lý trước (đổi kênh `rf ch`, hướng anten, vị
+   trí lắp) — đo lại bước 3. Đây là bước bắt buộc trước khi nghĩ đến repeater
+   (mục 7.3 tài liệu thiết kế).
+5. **Vẫn kém do xa/khuất:** chọn 1 board trung gian (slave sẵn có ở giữa hoặc
+   board bridge đặt thêm), bật `rf repeater on` (hoặc giữ nút S2 3 giây).
+   **Chỉ 1 repeater cho 1 khu vực** — nhiều repeater cùng nghe nhau sẽ chiếm
+   kênh vô ích. Tăng timeout Modbus master lên ≥1500ms (thêm ~1 hop trễ mỗi
+   chiều). Đo lại bước 3 để xác nhận.
+6. **Giám sát định kỳ:** slave "sống nhờ repeater" vẫn hiện UP — nên đọc
+   `rf stat` trên board repeater (`RELAY=<n>` tăng đều nghĩa là nó đang thật
+   sự gánh link), và kiểm tra lại LOSS‰ định kỳ để phát hiện link trực tiếp
+   xấu thêm.
 
 ---
 
@@ -355,10 +394,14 @@ Log Modbus Poll (Excel riêng, do người dùng chọn nơi lưu) — xem `modb
 
 ## Cần xác nhận/hiệu chỉnh trên bàn test (calib)
 
-- **Thứ tự bit DIP switch** (SW1-8 ↔ ngõ A-H của 74HC165): netlist trích xuất
-  từ PDF bị nén, `dipsw.cpp` giả định bit0-5=SW1-6 (**DEV_ID**, 0=Hub/1-63=Slave
-  — đổi vai trò từ Network ID cũ, xem mục "Kiến trúc mạng"), bit6-7=SW7-8
-  (Baudrate) — cần đối chiếu thực tế và sửa lại nếu khác.
+- **DIP switch — cực tính ĐÃ đối chiếu trên board thật (2026-07-06):** gạt
+  switch ON = nối GND → mức điện 0 (chân 74HC165 có pull-up); đọc thô all-OFF
+  ra `0xFF` (DEVID=63) là sai quy ước "DIP để nguyên = 0 = HUB". Đã **đảo bit
+  trong `dip_read_raw()`** — từ nay all-OFF = `0x00` = DEVID 0 (HUB), BAUD
+  4800 (SW7-8 = 00). **Lưu ý baud khi lắp đặt:** SW7-8 đều OFF nghĩa là RS485
+  chạy 4800 — muốn 9600 gạt SW7 ON (01), 19200 gạt cả SW7+SW8 ON (11).
+  **Thứ tự bit** (SW1-8 ↔ ngõ A-H) vẫn theo giả định bit0-5=SW1-6, bit6-7=SW7-8
+  — cần xác nhận thêm bằng cách gạt riêng SW1 xem DEVID có ra 1 không.
 - **NET_ID lưu Flash**: chưa xác nhận trên phần cứng thật việc `net id <n>`
   ghi xuống rồi đọc lại đúng sau khi rút nguồn/cấp lại (địa chỉ
   `NET_ID_FLASH_ADDR = 0x001000`, `flashmem.h`) — nên test trước khi lắp đặt
@@ -376,9 +419,14 @@ Log Modbus Poll (Excel riêng, do người dùng chọn nơi lưu) — xem `modb
   2.520–2.525 (GHz) ứng với kênh nRF24 120-125 — chưa thấy switch/jumper chọn
   kênh riêng trên schematic, hiện cố định trong firmware (`rf ch` để đổi thủ
   công lúc test). Cần xác nhận cách chọn kênh thực tế của sản phẩm.
-- **Log forward `FWD ...`** hiện in mọi khung relay — nếu lưu lượng Modbus cao
-  khi lắp đặt thật, cân nhắc mặc định `bridge log off` để console đỡ dày đặc
-  (app test vẫn dùng `bridge log on` khi cần quan sát).
+- **Log forward `FWD ...`**: từ FW 0.2.0 mặc định `bridge log off` (đã áp
+  dụng khuyến nghị này cho lắp đặt thật) — app test/kỹ thuật viên bật lại bằng
+  `bridge log on` khi cần quan sát (app có sẵn nút toggle).
+- **RAM sau FW 0.2.0**: LOSS‰ theo dev_id (+128B), buffer ghép mảnh 250→264B
+  (×2, +28B) — tổng tăng ~160B so với 0.1.x, bù lại bỏ biến auto-adapt. Biên
+  RAM đã từng chỉ dư ~168B (xem "bài học RAM" ở trên) nên **bắt buộc `pio run`
+  trên máy thật xem có tràn RAM không + `rtos stat` sau khi nạp** — nếu thiếu,
+  giảm `RTOS_STACK_xxx` trước.
 - **`_reference/` chứa firmware/app các đợt trước** (đối chiếu pin map / luồng
   test cũ của OPMS & Smart PDU) — không phải code của board này.
 - **RAM RTOS trên phần cứng thật**: `configTOTAL_HEAP_SIZE=4KB` + stack từng

@@ -21,9 +21,17 @@
 //    (dev_id, seq) o dau nhan -> tang xac suat toi noi ma khong dung ACK.
 // =========================================================
 
-#define RF_REDUNDANT_TX_DEFAULT 3 // so lan gui lap lai moi khung (gia tri khoi dong)
-#define RF_REDUNDANT_TX_MIN 2     // khong giam duoi muc nay (van can du phong toi thieu)
-#define RF_REDUNDANT_TX_MAX 6     // khong tang qua muc nay (tranh chiem kenh qua nhieu)
+// 2026-07-06 (muc 3.1/3.3 tai lieu dinh huong): BO thuat toan tu tang/giam
+// redundant-TX theo link toan mang - voi 16 slave cung 1 NET_ID, gan nhu giay
+// nao hub cung nghe DUOC AI DO phat -> thuat toan luon thay "link tot", giam
+// ve muc MIN va KHONG BAO GIO tang du phong cho dung slave xa/yeu dang rot
+// nang (bi "trung binh hoa"). Nay dung GIA TRI CO DINH da kiem chung qua bench
+// test (doi duoc luc chay bang CLI "rf redund <2-6>", chi RAM - de Modbus
+// timeout/retry lop tren xu ly phan con lai (khuyen nghi timeout 1000-1500ms).
+#define RF_REDUNDANT_TX_DEFAULT 3 // so lan gui lap lai moi khung (CO DINH, doi bang "rf redund")
+#define RF_REDUNDANT_TX_MIN 2     // bien duoi cho "rf redund" (van can du phong toi thieu)
+#define RF_REDUNDANT_TX_MAX 6     // bien tren cho "rf redund" (tranh chiem kenh qua nhieu)
+#define RF_RELAY_TX 2             // so lan phat lai moi khung khi lam REPEATER (nhu heartbeat)
 
 // ---------------------------------------------------------------------
 // HEARTBEAT + GIAM SAT LINK (lay y tuong tu bo telemetry MAVLink/SiK radio:
@@ -86,17 +94,28 @@ void rf_get_stats(uint32_t *tx, uint32_t *rx_ok, uint32_t *rx_dup,
 void rf_reset_stats();
 
 // ----- Heartbeat / Link health TOAN MANG (goi rf_process() moi vong loop() la
-// du, ham nay tu chay ben trong rf_process(), khong can goi rieng). Dung cho
-// thuat toan tu dieu chinh redundant-TX (khong tach theo dev_id - xem muc 3.3:
-// "co the don gian hon: bo auto-adapt toan cuc..."; giu nguyen toan cuc o day,
-// CHUA can tach theo tung dev_id cho ca nay). -----
+// du, ham nay tu chay ben trong rf_process(), khong can goi rieng). 2026-07-06:
+// redundant-TX da chuyen sang GIA TRI CO DINH (xem ghi chu RF_REDUNDANT_TX_
+// DEFAULT o tren) - cac getter/counter duoi day chi con phuc vu chan doan. -----
 bool rf_link_up();              // true = da nhan duoc gi do (tu BAT KY dev_id nao)
                                  // trong vong RF_LINK_TIMEOUT_MS gan nhat
 uint8_t rf_link_peer_id();      // dev_id da nghe thay GAN NHAT (khong dai dien ca mang)
 uint32_t rf_link_age_ms();      // so ms tu lan nhan cuoi cung (bat ky khung nao, bat ky dev_id)
-uint8_t rf_get_redundancy();    // so lan gui lap hien tai (tu dieu chinh RF_REDUNDANT_TX_MIN..MAX)
-uint16_t rf_get_loss_permille(); // uoc luong ty le "ky heartbeat bi mat trang" (phan nghin, 0-1000)
+uint8_t rf_get_redundancy();    // so lan gui lap hien tai (CO DINH, doi bang rf_set_redundancy)
+void rf_set_redundancy(uint8_t n); // doi so lan gui lap (kep trong MIN..MAX) - CLI "rf redund <n>", chi RAM
+uint16_t rf_get_loss_permille(); // uoc luong ty le "ky heartbeat bi mat trang" TOAN MANG (phan nghin)
 void rf_get_hb_stats(uint32_t *hb_tx, uint32_t *hb_rx);
+
+// ----- REPEATER 1-hop (muc 6 tai lieu dinh huong) - relay DOI XUNG ca 2 chieu
+// (poll hub->slave lan response slave->hub), giu nguyen dev_id/seq goc (ben
+// nhan coi nhu 1 lan "gui lap" binh thuong, dedup san co tu loc), chi relay
+// BAN DAU TIEN cua moi (dev_id,seq) va chi khi hop > 0 (giam 1 moi lan relay).
+// Chi nen bat cho DUNG 1 board dat giua hub va (cac) slave xa - KHONG bat tren
+// moi slave (broadcast storm). Bat/tat: CLI "rf repeater on|off" (luu Flash,
+// xem flashmem.h) hoac giu nut S2 3 giay (xem ledbuzz.cpp). -----
+void rf_set_repeater(bool en); // chi RAM - persist do CLI/nut S2 tu goi repeater_save()
+bool rf_is_repeater();
+uint32_t rf_get_relay_cnt();   // so khung DA relay (moi (dev_id,seq) tinh 1, khong tinh so lan phat lai)
 
 // ----- Heartbeat / Link health THEO TUNG dev_id (moi 3.3/7.1) - phuc vu chan
 // doan dung thiet bi nao dang mat song khi co N slave dung chung 1 NET_ID,
@@ -105,3 +124,14 @@ bool rf_dev_seen(uint8_t dev_id);      // da tung nhan duoc khung hop le nao tu 
 bool rf_dev_link_up(uint8_t dev_id);   // true = nhan duoc gi do tu dev_id nay trong RF_LINK_TIMEOUT_MS gan nhat
 uint32_t rf_dev_age_s(uint8_t dev_id); // so GIAY (khong phai ms - xem ghi chu RF_MAX_DEV o tren) tu lan
                                        // nhan cuoi tu dev_id nay (UINT32_MAX neu chua tung thay)
+
+// LOSS%o THEO TUNG dev_id (2026-07-06, muc 7.2): moi thiet bi phat heartbeat
+// 1 lan/giay -> so heartbeat NHAN DUOC tu 1 dev_id so voi so giay troi qua ke
+// tu lan "rf reset" gan nhat cho ra ty le mat rieng cua thiet bi do (phan
+// nghin, 0-1000). QUY TRINH DO DUNG: cap nguon du moi board -> "rf reset" ->
+// cho >= 60 giay -> "rf devices" (cot loss%o). Thiet bi len nguon SAU lan
+// "rf reset" se bi tinh loss cao gia tao cho toi lan reset ke tiep. Cua so do
+// toi da ~18.2 gio (uint16 giay) - du cho khao sat T3/T4, khong phai so lieu
+// tich luy vinh vien. Tra ve 0xFFFF neu chua du du lieu (< 10 giay hoac chua
+// tung thay dev_id nay).
+uint16_t rf_dev_loss_permille(uint8_t dev_id);

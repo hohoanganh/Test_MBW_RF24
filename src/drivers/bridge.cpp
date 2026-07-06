@@ -9,7 +9,11 @@
 #define FWD_PREVIEW_MAX 16 // so byte in preview (hex) khi log forward
 
 static bool s_enabled = true; // MAC DINH BAT: hanh vi chuan cua thiet bi
-static bool s_log = true;     // MAC DINH BAT log forward (de app hien thi)
+// 2026-07-06: log forward MAC DINH TAT cho lap dat that (Modbus master poll
+// lien tuc 16 slave se in "FWD ..." day dac console + ton CPU in chuoi trong
+// task uu tien cao). App test/kY thuat vien bat lai bang "bridge log on" khi
+// can quan sat (app da co san nut toggle).
+static bool s_log = false;
 static uint8_t s_buf[MODBUS_MAX_LEN];
 static uint16_t s_len = 0;
 static uint32_t s_last_byte_us = 0;

@@ -29,6 +29,12 @@ void drv_init() {
 
   rf_init(120, netid, dev_id); // 120 = kenh mac dinh (2.520GHz vung, tranh WiFi 1-11)
 
+  // Co REPEATER 1-hop (muc 6 tai lieu dinh huong) doc tu Flash - board da
+  // duoc chi dinh lam repeater (qua CLI "rf repeater on" hoac giu nut S2 3s)
+  // giu nguyen vai tro sau moi lan mat nguon, khong can cau hinh lai.
+  bool repeater = repeater_load();
+  rf_set_repeater(repeater);
+
   // RS485 baud lay theo DIP SW7-8 luc khoi dong
   rs485_set_baud(dip_baud_value());
 
@@ -44,4 +50,7 @@ void drv_init() {
     SerialDBG.println("CANH BAO: NET_ID CHUA CAU HINH (dang tam dung 0) - "
                        "dung CLI \"net id <0-63>\" de set truoc khi lap dat that!");
   }
+  if (repeater)
+    SerialDBG.println("REPEATER: ON (Flash) - board nay dang PHAT LAI khung cua "
+                       "node khac (1-hop). Tat bang \"rf repeater off\" hoac giu nut S2 3s.");
 }
