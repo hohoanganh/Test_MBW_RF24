@@ -10,12 +10,18 @@
 // =========================================================
 
 // ===== FIRMWARE VERSION =====
+// 0.3.0 (2026-07-06): EVENT LOG mat-link theo dev_id luu Flash (vung 0x010000,
+//   2048 ban ghi, KHONG ton RAM tinh - quet vi tri ghi on-demand vi chip 10KB);
+//   moi su kien DOWN dong dau NGAY+GIO tu RTC. Mo rong RTC PCF85063 co NGAY
+//   (rtc_get/set_date; "rtc set [dd/mm/yy] hh:mm:ss"). Lenh moi: "log"/"log clear".
+//   Dong "rf stat" them RF_DEVS: liet ke tung dev_id UP/DOWN + loss ngay tren
+//   status. Event UP/DOWN theo dev_id in noi bat hon (nhan HUB/SLAVE).
 // 0.2.0 (2026-07-06): toi uu lap dat 1 hub + 16 slave - redundant TX co dinh
 // (bo auto-adapt toan cuc), LOSS%o theo tung dev_id, REPEATER 1-hop (byte hop
 // trong khung -> DOI CAU TRUC KHUNG, moi board phai nap cung phien ban nay),
 // bridge log mac dinh OFF. Xem README +
 // docs/Dinh_Huong_Mo_Rong_64_Node_ModbusRTU.md.
-#define FW_VERSION "0.2.0"
+#define FW_VERSION "0.3.0"
 
 // ===== DEVICE ID (van tay de app test xac thuc dung thiet bi) =====
 #define DEVICE_ID "MBW_RF24_RS485"
