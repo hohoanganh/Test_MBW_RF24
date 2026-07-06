@@ -145,6 +145,7 @@ class ModbusRTUMaster:
         self.ser = None
         self.lock = threading.Lock()
         self.log_callback = log_callback  # callback(direction, raw_bytes)
+        self.last_rx_hex = ""  # frame RX gan nhat (HEX) - de ghi "Raw RX" vao log Excel
 
     def connect(self, port, baudrate=9600, parity="N", databits=8, stopbits=1, timeout=1.0):
         if serial is None:
@@ -174,8 +175,10 @@ class ModbusRTUMaster:
         return self.ser is not None and self.ser.is_open
 
     def _log(self, direction, raw: bytes):
+        hex_str = " ".join("%02X" % b for b in raw)
+        if direction == "RX":
+            self.last_rx_hex = hex_str  # luu de ghi cot "Raw RX" trong log Excel
         if self.log_callback:
-            hex_str = " ".join("%02X" % b for b in raw)
             self.log_callback(direction, hex_str)
 
     def _transact(self, request: bytes, expected_min_len=5, retries=1):
@@ -321,105 +324,45 @@ class ExcelLogger:
             raise RuntimeError("Thu vien 'openpyxl' chua duoc cai dat. Chay: pip install openpyxl")
         self.wb = Workbook()
         self.ws_all = self.wb.active
-        self.ws_all.title = "AllData"
-        headers = ["Date", "Time"] + [
-            "%s (%s)" % (r["name"], r["unit"]) if r["unit"] else r["name"]
-            for r in self.register_map
-        ]
+        self.ws_all.title = "Log"
+        # LOG GON (2026-07-06): chi giu Nhiet do, Do am, frame RX tho (HEX) va
+        # ket qua check frame (OK/LOI). Bo cac thanh ghi cau hinh + cac sheet rieng.
+        headers = ["Date", "Time", "Temperature (°C)", "Humidity (%RH)", "Raw RX (HEX)", "Frame OK"]
         self.ws_all.append(headers)
         self._style_header(self.ws_all, len(headers))
-        self.ws_all.column_dimensions["A"].width = 12
-        self.ws_all.column_dimensions["B"].width = 12
-        for idx in range(len(headers) - 2):
-            self.ws_all.column_dimensions[get_column_letter(idx + 3)].width = 20
-
-        # sheet rieng cho tung thanh ghi so (de tien ve bieu do, giong app mau)
-        self.ws_by_name = {}
-        for r in self.register_map:
-            safe_name = r["name"][:28]
-            ws = self.wb.create_sheet(title=safe_name)
-            unit_label = r["unit"] if r["unit"] else "Value"
-            ws.append(["Date", "Time", "Value", "Unit"])
-            self._style_header(ws, 4)
-            ws.column_dimensions["A"].width = 12
-            ws.column_dimensions["B"].width = 12
-            ws.column_dimensions["C"].width = 14
-            ws.column_dimensions["D"].width = 10
-            self.ws_by_name[r["name"]] = ws
-
-        # sheet rieng ghi lai tung frame giao tiep TX/RX (giong khung Data Log trong app)
-        self.ws_comm = self.wb.create_sheet(title="CommLog")
-        self.ws_comm.append(["Date", "Time", "Direction", "Frame (HEX)"])
-        self._style_header(self.ws_comm, 4)
-        self.ws_comm.column_dimensions["A"].width = 12
-        self.ws_comm.column_dimensions["B"].width = 14
-        self.ws_comm.column_dimensions["C"].width = 10
-        self.ws_comm.column_dimensions["D"].width = 55
+        for i, w in enumerate([12, 12, 16, 16, 50, 10]):
+            self.ws_all.column_dimensions[get_column_letter(i + 1)].width = w
+        self.ws_comm = None
         self.comm_row_count = 0
         self.comm_log_full_warned = False
-
         self.save()
 
     def open_existing_or_create(self):
         if os.path.exists(self.filepath):
             try:
                 self.wb = load_workbook(self.filepath)
-                self.ws_all = self.wb["AllData"] if "AllData" in self.wb.sheetnames else self.wb.active
-                self.ws_by_name = {}
-                for r in self.register_map:
-                    name = r["name"][:28]
-                    if name in self.wb.sheetnames:
-                        self.ws_by_name[r["name"]] = self.wb[name]
-                    else:
-                        ws = self.wb.create_sheet(title=name)
-                        ws.append(["Date", "Time", "Value", "Unit"])
-                        self._style_header(ws, 4)
-                        self.ws_by_name[r["name"]] = ws
-
-                if "CommLog" in self.wb.sheetnames:
-                    self.ws_comm = self.wb["CommLog"]
-                    self.comm_row_count = max(0, self.ws_comm.max_row - 1)
-                else:
-                    self.ws_comm = self.wb.create_sheet(title="CommLog")
-                    self.ws_comm.append(["Date", "Time", "Direction", "Frame (HEX)"])
-                    self._style_header(self.ws_comm, 4)
-                    self.comm_row_count = 0
-                self.comm_log_full_warned = False
+                self.ws_all = self.wb["Log"] if "Log" in self.wb.sheetnames else self.wb.active
+                self.ws_comm = None
                 return
             except Exception:
                 pass
         self.create_new()
 
-    def append_row(self, timestamp: datetime, values: dict):
-        """values: dict {reg_name: value}. Ghi vao bo nho, chua save ngay."""
+    def append_row(self, timestamp: datetime, temperature="", humidity="",
+                   raw_hex="", frame_ok=True):
+        """Ghi 1 dong: gio, nhiet do, do am, frame RX tho (HEX), Frame OK/LOI."""
         with self.lock:
             date_str = timestamp.strftime("%d/%m/%Y")
             time_str = timestamp.strftime("%H:%M:%S")
-            row = [date_str, time_str]
-            for r in self.register_map:
-                row.append(values.get(r["name"], ""))
-            self.ws_all.append(row)
-
-            for r in self.register_map:
-                ws = self.ws_by_name.get(r["name"])
-                if ws is not None and r["name"] in values:
-                    ws.append([date_str, time_str, values[r["name"]], r["unit"]])
+            self.ws_all.append([date_str, time_str, temperature, humidity,
+                                raw_hex, "OK" if frame_ok else "LỖI"])
+            if not frame_ok and Workbook is not None:
+                self.ws_all.cell(row=self.ws_all.max_row, column=6).font = Font(color="D63C3C", bold=True)
             self.pending_rows += 1
 
     def append_comm(self, timestamp: datetime, direction: str, hex_str: str):
-        """Ghi 1 dong frame TX/RX vao sheet CommLog. Tra ve False neu da dat
-        gioi han an toan COMM_LOG_MAX_ROWS (de tranh file Excel phinh to qua muc)."""
-        with self.lock:
-            if self.ws_comm is None:
-                return True
-            if self.comm_row_count >= self.COMM_LOG_MAX_ROWS:
-                return False
-            date_str = timestamp.strftime("%d/%m/%Y")
-            time_str = timestamp.strftime("%H:%M:%S.%f")[:-3]
-            self.ws_comm.append([date_str, time_str, direction, hex_str])
-            self.comm_row_count += 1
-            self.pending_rows += 1
-            return True
+        """Khong con sheet CommLog rieng - 'Raw RX' da gop vao dong log chinh."""
+        return True
 
     def save(self):
         with self.lock:
@@ -757,11 +700,10 @@ class ModbusPollApp(tk.Tk):
 
         hint = tk.Label(
             parent,
-            text=("Khi bat dau ghi log, moi gia tri doc duoc trong qua trinh poll se duoc them vao file Excel "
-                  "(sheet AllData + sheet rieng cho tung thong so), tu dong luu dinh ky. "
-                  "Tat ca frame TX/RX giao tiep voi thiet bi (giong khung Data Log ben tren) cung duoc ghi "
-                  "vao sheet 'CommLog' trong cung file. Neu file bi khoa (VD: dang mo bang Excel) khi luu, "
-                  "du lieu se KHONG bi mat - app se tu dong thu luu lai o lan doc tiep theo."),
+            text=("Khi bat dau ghi log, moi lan poll ghi 1 dong vao file Excel (sheet 'Log'): "
+                  "Ngay, Gio, Nhiet do, Do am, frame RX tho (HEX) va ket qua check frame (OK/LOI). "
+                  "Tu dong luu dinh ky. Neu file bi khoa (VD: dang mo bang Excel) khi luu, du lieu se "
+                  "KHONG bi mat - app se tu dong thu luu lai o lan doc tiep theo."),
             bg=MAIN_BG, fg=DIS_FG, font=FONT_SM, wraplength=1000, justify="left"
         )
         hint.pack(anchor="w", padx=10, pady=(4, 10))
@@ -801,19 +743,8 @@ class ModbusPollApp(tk.Tk):
         ts_dt = datetime.now()
         ts = ts_dt.strftime("%H:%M:%S.%f")[:-3]
         self.gui_queue.put(("log", "[%s] %s: %s" % (ts, direction, hex_str)))
-
-        # Neu dang bat Ghi log Excel, luu them frame nay vao sheet CommLog
-        if self.logging_active and self.excel_logger is not None:
-            try:
-                still_ok = self.excel_logger.append_comm(ts_dt, direction, hex_str)
-                if not still_ok and not self.excel_logger.comm_log_full_warned:
-                    self.excel_logger.comm_log_full_warned = True
-                    self.gui_queue.put(("error",
-                        "CommLog da dat gioi han %d dong, ngung ghi them frame TX/RX vao Excel "
-                        "(du lieu Temperature/Humidity van tiep tuc duoc ghi binh thuong)."
-                        % self.excel_logger.COMM_LOG_MAX_ROWS))
-            except Exception as e:
-                self.gui_queue.put(("error", "Ghi CommLog loi: %s" % e))
+        # (Log Excel gon: frame RX tho da duoc gop vao cot "Raw RX" cua dong log
+        #  chinh trong _poll_loop - khong con sheet CommLog rieng.)
 
     def _process_gui_queue(self):
         try:
@@ -900,6 +831,7 @@ class ModbusPollApp(tk.Tk):
             slave_id = self.slave_id_var.get()
             values = {}
             ok_any = False
+            temp_raw = ""; hum_raw = ""; temp_ok = True; hum_ok = True
             for reg in self.register_map:
                 if not self.poll_running.is_set():
                     break
@@ -908,10 +840,18 @@ class ModbusPollApp(tk.Tk):
                     raw = self.master_modbus.read_holding_registers(slave_id, reg["address"], n, retries=1)
                     val = raw_to_value(raw, reg["type"], reg["scale"])
                     values[reg["name"]] = val
+                    if reg["name"] == "Temperature":
+                        temp_raw = self.master_modbus.last_rx_hex
+                    elif reg["name"] == "Humidity":
+                        hum_raw = self.master_modbus.last_rx_hex
                     ok_any = True
                     error_count = 0
                 except Exception as e:
                     values[reg["name"]] = "ERR"
+                    if reg["name"] == "Temperature":
+                        temp_ok = False
+                    elif reg["name"] == "Humidity":
+                        hum_ok = False
                     error_count += 1
                     self.gui_queue.put(("error", str(e)))
                 time.sleep(0.02)  # nghi ngan giua cac request tranh dung do RS485
@@ -923,8 +863,11 @@ class ModbusPollApp(tk.Tk):
 
             if self.logging_active and self.excel_logger is not None:
                 try:
-                    numeric_values = {k: v for k, v in values.items() if v != "ERR"}
-                    self.excel_logger.append_row(datetime.now(), numeric_values)
+                    raw_hex = "  |  ".join(x for x in (temp_raw, hum_raw) if x)
+                    self.excel_logger.append_row(
+                        datetime.now(),
+                        values.get("Temperature", ""), values.get("Humidity", ""),
+                        raw_hex, temp_ok and hum_ok)
                     self.excel_logger.flush_if_needed(min_rows=5)
                 except (PermissionError, OSError) as e:
                     # File dang bi khoa (thuong do dang mo bang Excel). Du lieu KHONG mat -
@@ -1220,7 +1163,10 @@ class ModbusPollApp(tk.Tk):
                     numeric_values[k] = float(v)
                 except (ValueError, TypeError):
                     numeric_values[k] = v
-            logger.append_row(datetime.now(), numeric_values)
+            logger.append_row(datetime.now(),
+                               numeric_values.get("Temperature", ""),
+                               numeric_values.get("Humidity", ""),
+                               "", True)
             logger.save()
             messagebox.showinfo(APP_TITLE, "Da xuat snapshot ra:\n%s" % path)
         except Exception as e:

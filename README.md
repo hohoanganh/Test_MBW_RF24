@@ -314,7 +314,7 @@ hiệu nhận biết, không thể trùng với khung dữ liệu thật). Cơ c
 | Lệnh | Chức năng |
 |---|---|
 | `id` / `ver` / `help` | ID thiết bị / phiên bản FW / danh sách lệnh |
-| `led` / `beep on\|off` | Toggle LED_LIFE / tắt-bật tiếng bíp |
+| `led` / `beep on\|off\|test` | Toggle LED_LIFE / tắt-bật (mute) tiếng bíp / `beep test` kêu thử. **Còi PASSIVE kích xung PWM bằng `tone()`** (giống AK_MCU) — không phải còi active |
 | `dip` | Đọc DIP switch: `DEVID` (0-63, kèm `(HUB)`/`(SLAVE)`) + `BAUD` (4800/9600/14400/19200) |
 | `rs485 <text>` | Gửi thử 1 chuỗi ra RS485 |
 | `rsl` | Loopback RS485 (cần nối tắt A-B) |

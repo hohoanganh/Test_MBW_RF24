@@ -36,7 +36,7 @@ void uart_log(const char *msg) { SerialDBG.println(msg); }
 static void print_help() {
   dbg_lock();
   SerialDBG.println("id / ver / help");
-  SerialDBG.println("led  (toggle LED_LIFE) / beep on|off");
+  SerialDBG.println("led  (toggle LED_LIFE) / beep on|off|test  (test = bip thu coi PWM)");
   SerialDBG.println("dip  (doc DIP: DEVID + BAUD)");
   SerialDBG.println("rs485 <text>  (gui thu RS485)");
   SerialDBG.println("rsl  (loopback RS485, can noi tat A-B)");
@@ -91,14 +91,20 @@ static void cli_execute(char *cmd) {
   else if (strncmp(cmd, "beep", 4) == 0) {
     char st[8];
     bool have_arg = sscanf(cmd, "beep %7s", st) == 1;
+    bool is_test = have_arg && strcmp(st, "test") == 0;
     bool valid = have_arg && (strcmp(st, "on") == 0 || strcmp(st, "off") == 0);
     if (valid)
       buzzer_set_mute(strcmp(st, "off") == 0);
+    if (is_test)
+      buzzer_beep(BUZZER_FREQ, 300); // bip test coi PWM (2000Hz 300ms)
     dbg_lock();
-    if (valid || strcmp(cmd, "beep") == 0) {
+    if (is_test) {
+      SerialDBG.println(buzzer_is_muted() ? "BEEP TEST (dang MUTE - khong keu, go 'beep on' truoc)"
+                                          : "BEEP TEST: coi PWM 2000Hz 300ms");
+    } else if (valid || strcmp(cmd, "beep") == 0) {
       SerialDBG.println(buzzer_is_muted() ? "BEEP OFF" : "BEEP ON");
     } else {
-      SerialDBG.println("Usage: beep on|off");
+      SerialDBG.println("Usage: beep on|off|test");
     }
     dbg_unlock();
   }

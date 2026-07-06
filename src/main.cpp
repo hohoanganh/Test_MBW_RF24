@@ -68,9 +68,11 @@ extern "C" void vApplicationGetIdleTaskMemory(StaticTask_t **ppxIdleTaskTCBBuffe
                                                uint32_t *pulIdleTaskStackSize) {
   // configMINIMAL_STACK_SIZE cua STM32duino tinh tu linker symbol
   // (_Min_Stack_Size) nen KHONG phai hang so compile-time -> dung size co dinh.
-  enum { IDLE_STACK_WORDS = 128 }; // 2026-07-03: tang lai 96->128 word khi
-                                   // debug treo (idle hook cua STM32duino GOI
-                                   // loop() moi vong - khong hoan toan "rong")
+  // 2026-07-03: tang 96->128 word khi debug treo (idle hook GOI loop() moi vong).
+  // 2026-07-06: giam 128->120 (giai phong 32 byte .bss cho tone() coi PWM tren
+  // chip 10KB RAM) - AN TOAN vi tu 2026-07-05 loop() chi con feed watchdog
+  // (rtos_all_tasks_alive() + wdt_feed(), rat nong), 120 word=480B >> 96 tung treo.
+  enum { IDLE_STACK_WORDS = 120 };
   static StaticTask_t s_tcbIdle;
   static StackType_t s_stackIdle[IDLE_STACK_WORDS];
   *ppxIdleTaskTCBBuffer = &s_tcbIdle;

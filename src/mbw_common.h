@@ -64,9 +64,10 @@
 
 // ===== LED, Buzzer, nut nhan =====
 #define LED_LIFE PB8 // LED trang thai 2 mau (qua Q4)
-#define BUZZER PB0   // qua Q1, active-high
-#define BUZZER_ON_LEVEL HIGH
-#define BUZZER_OFF_LEVEL LOW
+#define BUZZER PB0   // qua Q1 - COI PASSIVE (kich xung PWM), kich bang tone()
+                     // giong AK_MCU_Test_3I0 (khong phai coi active tu keu)
+#define BUZZER_FREQ 2000  // tan so mac dinh (Hz) khi bip
+#define BUZZER_OFF_LEVEL LOW // muc idle khi khong bip
 #define USER_BTN PA11 // nut nhan S2, INPUT_PULLUP (khong phai NRST)
 
 // ===== SWD (thong tin, khong dung lam GPIO trong firmware) =====
