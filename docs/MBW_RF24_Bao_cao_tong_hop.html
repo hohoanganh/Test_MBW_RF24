@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MBW RF24 RS485 2.0 — Báo cáo tổng hợp mất frame RS485/RF</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.1/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'base',
+    themeVariables: {
+      primaryColor: '#E7EAEE',
+      primaryTextColor: '#39424E',
+      primaryBorderColor: '#B7C0CB',
+      lineColor: '#295C9A',
+      secondaryColor: '#F4F6F8',
+      secondaryBorderColor: '#D8DEE5',
+      tertiaryColor: '#FFFFFF',
+      tertiaryBorderColor: '#D8DEE5',
+      noteBkgColor: '#FFF8EC',
+      noteBorderColor: '#F5A623',
+      fontFamily: 'Segoe UI, Roboto, Arial, sans-serif',
+      fontSize: '13px'
+    }
+  });
+</script>
+<style>
+  :root{
+    --main-bg:#F4F6F8; --white:#FFFFFF; --card-bd:#D8DEE5;
+    --hdr-bg:#24364B; --hdr-sub:#AEB8C4;
+    --primary:#295C9A; --primary-hov:#3474C7;
+    --sec-bg:#E7EAEE; --sec-tx:#39424E; --ink:#39424E;
+    --pass:#22A55A; --fail:#D63C3C; --warn:#F5A623; --dis:#B8BDC5;
+    --term-bg:#1F2933; --term-fg:#D8E2EA;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--main-bg);color:var(--ink);
+       font-family:"Segoe UI",Roboto,Arial,sans-serif;line-height:1.55;}
+  .wrap{max-width:980px;margin:0 auto;padding:0 20px 60px;}
+  header.hero{background:var(--hdr-bg);color:#fff;padding:36px 0 30px;margin-bottom:24px;}
+  header.hero .wrap{padding-top:0;padding-bottom:0;}
+  header.hero h1{margin:0 0 6px;font-size:26px;font-weight:700;}
+  header.hero .sub{color:var(--hdr-sub);font-size:14px;margin-bottom:18px;}
+  .badge{display:inline-block;padding:5px 14px;border-radius:20px;font-size:13px;font-weight:700;
+         letter-spacing:.2px;}
+  .badge.warn{background:var(--warn);color:#3a2a00;}
+  .badge.pass{background:var(--pass);color:#fff;}
+  .badge.fail{background:var(--fail);color:#fff;}
+  .badge.info{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.35);}
+
+  .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:20px 0 28px;}
+  @media(max-width:760px){.kpi-grid{grid-template-columns:repeat(2,1fr);}}
+  .kpi{background:var(--white);border:1px solid var(--card-bd);border-radius:10px;padding:14px 16px;}
+  .kpi .lbl{font-size:12px;color:var(--sec-tx);margin-bottom:6px;}
+  .kpi .val{font-size:22px;font-weight:700;}
+  .kpi .val.pass{color:var(--pass);}
+  .kpi .val.fail{color:var(--fail);}
+  .kpi .val.warn{color:var(--warn);}
+  .kpi .note{font-size:11px;color:var(--dis);margin-top:4px;}
+
+  section{margin-bottom:34px;}
+  h2{font-size:19px;border-left:4px solid var(--primary);padding-left:10px;margin:0 0 14px;}
+  h3{font-size:15px;color:var(--ink);margin:18px 0 8px;}
+  p{margin:0 0 12px;}
+  .card{background:var(--white);border:1px solid var(--card-bd);border-radius:10px;
+        padding:18px 20px;margin-bottom:14px;}
+
+  table{border-collapse:collapse;width:100%;margin:10px 0 16px;font-size:13.5px;}
+  th,td{border:1px solid var(--card-bd);padding:7px 10px;text-align:left;}
+  th{background:var(--hdr-bg);color:#fff;font-weight:600;font-size:12.5px;}
+  tr:nth-child(even){background:#FAFBFC;}
+  td.num{text-align:right;font-variant-numeric:tabular-nums;}
+  .g{color:var(--pass);font-weight:700;}
+  .r{color:var(--fail);font-weight:700;}
+  .o{color:var(--warn);font-weight:700;}
+
+  .chart-box{background:var(--white);border:1px solid var(--card-bd);border-radius:10px;
+             padding:16px;height:300px;}
+
+  .timeline{position:relative;margin-left:8px;padding-left:26px;border-left:2px solid var(--card-bd);}
+  .tl-item{position:relative;padding-bottom:22px;}
+  .tl-item:last-child{padding-bottom:0;}
+  .tl-dot{position:absolute;left:-33px;top:2px;width:14px;height:14px;border-radius:50%;
+          background:var(--primary);border:3px solid var(--white);box-shadow:0 0 0 2px var(--primary);}
+  .tl-dot.pass{background:var(--pass);box-shadow:0 0 0 2px var(--pass);}
+  .tl-dot.warn{background:var(--warn);box-shadow:0 0 0 2px var(--warn);}
+  .tl-dot.fail{background:var(--fail);box-shadow:0 0 0 2px var(--fail);}
+  .tl-date{font-size:12px;color:var(--sec-tx);font-weight:700;text-transform:uppercase;letter-spacing:.4px;}
+  .tl-title{font-size:15px;font-weight:700;margin:2px 0 4px;}
+  .tl-body{font-size:13.5px;color:var(--sec-tx);}
+
+  .two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+  @media(max-width:760px){.two-col{grid-template-columns:1fr;}}
+  .box-title{font-weight:700;margin-bottom:6px;}
+  .box-title.fail{color:var(--fail);}
+  .box-title.warn{color:var(--warn);}
+
+  code{background:#EEF1F4;border-radius:4px;padding:1px 5px;font-family:Consolas,monospace;font-size:12.5px;}
+  pre{background:var(--term-bg);color:var(--term-fg);border-radius:8px;padding:12px 14px;
+      font-family:Consolas,monospace;font-size:12.5px;overflow-x:auto;}
+
+  details{background:var(--white);border:1px solid var(--card-bd);border-radius:10px;
+          padding:10px 16px;margin-bottom:10px;}
+  details summary{cursor:pointer;font-weight:600;padding:6px 0;}
+  details[open] summary{margin-bottom:8px;}
+
+  footer{border-top:1px solid var(--card-bd);padding-top:16px;font-size:12px;color:var(--dis);}
+  .status-banner{display:flex;align-items:center;gap:14px;background:#FFF8EC;
+                  border:1px solid var(--warn);border-radius:10px;padding:16px 20px;}
+  .status-banner .dot{width:12px;height:12px;border-radius:50%;background:var(--warn);flex-shrink:0;
+                       animation:pulse 1.6s infinite;}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(245,166,35,.5);}70%{box-shadow:0 0 0 10px rgba(245,166,35,0);}100%{box-shadow:0 0 0 0 rgba(245,166,35,0);}}
+
+  .diagram-box{background:var(--white);border:1px solid var(--card-bd);border-radius:10px;
+               padding:16px;margin-bottom:8px;overflow-x:auto;text-align:center;}
+  .diagram-cap{font-size:12.5px;color:var(--sec-tx);margin:0 0 20px;padding-left:2px;}
+  .mermaid{display:flex;justify-content:center;}
+  .compare-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0 8px;}
+  @media(max-width:760px){.compare-grid{grid-template-columns:1fr;}}
+  .compare-card{border-radius:10px;padding:16px 18px;border:1px solid;}
+  .compare-card.bad{background:#FDEDED;border-color:#F3C6C6;}
+  .compare-card.good{background:#EAF7EE;border-color:#BEE6CB;}
+  .compare-card .ctitle{font-weight:700;margin-bottom:6px;font-size:13.5px;}
+  .compare-card.bad .ctitle{color:var(--fail);}
+  .compare-card.good .ctitle{color:var(--pass);}
+  .compare-card p{font-size:13px;margin:0;}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="badge info">MBW-RF-00-24 · STM32L151C8T6 · nRF24L01+</span>
+    <h1>Điều tra mất frame RS485 ↔ RF Wireless Bridge</h1>
+    <div class="sub">Log_Poll_1000ms — 07/07/2026 → 08/07/2026 &nbsp;|&nbsp; Tổng hợp cho team</div>
+    <span class="badge warn">🟠 Đang chạy soak test thêm 1 giờ để xác nhận kết quả mới nhất</span>
+  </div>
+</header>
+
+<div class="wrap">
+
+<section id="tldr">
+  <h2>Tóm tắt nhanh</h2>
+  <div class="card">
+    <p><b>Vấn đề ban đầu:</b> board bridge RS485↔RF mất/lỗi frame Modbus RTU ở mức ~5–8%, không rõ do đâu.</p>
+    <p><b>Phát hiện:</b> đây thực chất là <b>hai lỗi độc lập, cộng dồn</b> — (1) lỗi tách khung RS485 phía firmware bridge (dính 2 khung làm 1), và (2) mất gói thật trên sóng RF (redundant-TX không ACK). Sửa lỗi (1) mất <b>5 vòng lặp fix</b> vì mỗi lần chỉ giải quyết một phần cơ chế "block/bỏ qua đọc RS485" trong lúc bridge đang tự gửi.</p>
+    <p><b>Kết quả tới nay:</b> tần suất ghép khung RS485 giảm <span class="g">~65%</span> (41.6 → 14.6 lần/giờ), lỗi khung RAW (CRC + ngắn + ghép) chỉ còn <span class="g">0.36%</span>. Nhưng việc này lại làm lộ rõ nút thắt thật sự nằm ở tầng RF (~13–14% request không có phản hồi) — lớn hơn ~35 lần so với lỗi khung RS485 còn sót.</p>
+    <p><b>Đang làm:</b> vừa triển khai <b>redundancy tự thích ứng theo lỗi thực đo</b> (chỉ chạy trên Hub) để tự tăng độ dự phòng RF khi điều kiện kém — test sơ bộ hôm nay <span class="g">khá khả quan</span>, đang chạy thêm 1 giờ để có kết luận chính thức.</p>
+  </div>
+</section>
+
+<section id="kpi">
+  <h2>Số liệu chốt (test gần nhất, sau fix ghép khung — 65.6 phút, 08/07)</h2>
+  <div class="kpi-grid">
+    <div class="kpi">
+      <div class="lbl">Ghép khung RS485 (merge)</div>
+      <div class="val pass">↓ 65%</div>
+      <div class="note">41.6 → 14.6 lần/giờ</div>
+    </div>
+    <div class="kpi">
+      <div class="lbl">Lỗi khung RAW (CRC+ngắn+ghép)</div>
+      <div class="val pass">0.36%</div>
+      <div class="note">so với ~2% baseline gốc</div>
+    </div>
+    <div class="kpi">
+      <div class="lbl">Lỗi tổng % (request không phản hồi)</div>
+      <div class="val fail">13.40%</div>
+      <div class="note">so với 4.68% baseline gốc — nút thắt còn lại nằm ở RF</div>
+    </div>
+    <div class="kpi">
+      <div class="lbl">Vòng fix đã triển khai</div>
+      <div class="val warn">6</div>
+      <div class="note">5 vòng RS485 + 1 công cụ/thuật toán RF</div>
+    </div>
+  </div>
+
+  <div class="chart-box">
+    <canvas id="chartMerge"></canvas>
+  </div>
+  <p style="font-size:12px;color:var(--dis);margin-top:8px;">
+    Ghép khung RS485 giảm mạnh sau fix lần 5, nhưng "Lỗi tổng %" (mất gói RF thật) không đi theo — chứng minh đây là 2 vấn đề độc lập.
+  </p>
+</section>
+
+<section id="two-causes">
+  <h2>Hai nguyên nhân độc lập</h2>
+  <div class="two-col">
+    <div class="card">
+      <div class="box-title">1. Lỗi tách khung RS485 (bridge firmware) — ĐÃ XỬ LÝ ~99%</div>
+      <p style="font-size:13.5px;">Frame Modbus bị dính làm một do task RS485 (ưu tiên cao nhất) bị "chặn/bỏ qua" việc đọc RX trong lúc đang tự gửi phản hồi hoặc đang in log — qua 5 vòng fix mới xử lý hết các "cửa sổ mù" khác nhau gây ra cùng 1 triệu chứng.</p>
+    </div>
+    <div class="card">
+      <div class="box-title fail">2. Mất gói thật trên RF — NÚT THẮT CHÍNH HIỆN TẠI</div>
+      <p style="font-size:13.5px;">nRF24L01 dùng redundant-TX "mù" (gửi lặp lại, không ACK/retry phần cứng). Khi kênh nhiễu hoặc tín hiệu yếu, 3 bản gửi lặp vẫn không đủ đảm bảo ít nhất 1 bản tới nơi — biểu hiện là request gửi đi không có phản hồi quay về, dù không có lỗi khung nào ở lớp bridge.</p>
+    </div>
+  </div>
+</section>
+
+<section id="mechanism">
+  <h2>Cơ chế RF đang hoạt động</h2>
+
+  <h3>1. Kiến trúc mạng — broadcast, không phải điểm-điểm</h3>
+  <div class="diagram-box">
+    <div class="mermaid">
+flowchart LR
+    MASTER["Modbus Master<br/>qua RS485"] -->|RS485| HUB["HUB<br/>dev_id = 0"]
+    HUB <-->|"RF broadcast<br/>chung 1 NET_ID"| S1["SLAVE #1<br/>dev_id = 1"]
+    HUB <-->|"RF broadcast"| S2["SLAVE #2<br/>dev_id = 2"]
+    HUB <-.->|"RF broadcast"| S3["... tối đa 63 Slave"]
+    S1 -->|RS485| D1["Thiết bị Modbus<br/>thật #1"]
+    S2 -->|RS485| D2["Thiết bị Modbus<br/>thật #2"]
+    style HUB fill:#295C9A,stroke:#24364B,color:#fff
+    style MASTER fill:#E7EAEE,stroke:#B7C0CB,color:#39424E
+    style S1 fill:#E7EAEE,stroke:#B7C0CB,color:#39424E
+    style S2 fill:#E7EAEE,stroke:#B7C0CB,color:#39424E
+    style S3 fill:#F4F6F8,stroke:#D8DEE5,color:#B8BDC5,stroke-dasharray: 3 3
+    style D1 fill:#FFFFFF,stroke:#D8DEE5,color:#39424E
+    style D2 fill:#FFFFFF,stroke:#D8DEE5,color:#39424E
+    </div>
+  </div>
+  <p class="diagram-cap">HUB không gửi riêng cho từng Slave — mỗi gói RF là broadcast, <b>MỌI</b> Slave đều nhận được, tự lọc theo địa chỉ Modbus có khớp với thiết bị vật lý gắn với mình hay không. Đây là lý do <code>dev_id</code> không phụ thuộc vào địa chỉ Modbus thật, và vì sao mọi board phải dùng chung 1 kênh + NET_ID.</p>
+
+  <h3>2. Gửi lặp (redundant-TX) thay ACK — không có bắt tay phần cứng</h3>
+  <div class="diagram-box">
+    <div class="mermaid">
+sequenceDiagram
+    participant M as Modbus Master
+    participant H as HUB
+    participant S1 as Slave so 1 - dung dia chi
+    participant S2 as Slave so 2 - khac dia chi
+
+    M->>H: Request RS485 (địa chỉ = 05)
+    H->>S1: RF broadcast x3 (redundant, KHÔNG ACK)
+    H->>S2: RF broadcast x3 (cùng gói, mọi Slave đều nhận)
+    Note over S2: Địa chỉ không khớp thiết bị cục bộ -> bỏ qua, không phản hồi
+    S1->>H: Response RF x3 (redundant, lọc trùng theo seq)
+    H->>M: Response RS485
+    </div>
+  </div>
+  <p class="diagram-cap">Không có ACK/retry phần cứng (vì là kênh broadcast, ACK 1-1 không hợp lệ) — độ tin cậy dựa hoàn toàn vào việc <b>gửi lặp lại N lần</b> (redundancy, mặc định 3) và lọc trùng ở đầu nhận theo (dev_id, seq). Khi kênh nhiễu, N lần gửi vẫn có thể không đủ — đây chính là nút thắt cổ chai hiện tại (mục "Lỗi tổng %" ~13-14%).</p>
+
+  <h3>3. Vòng lặp tự điều chỉnh độ dự phòng (mới triển khai, chỉ chạy trên HUB)</h3>
+  <div class="diagram-box">
+    <div class="mermaid">
+flowchart TD
+    A["Mỗi vòng lặp Task RF<br/>(chỉ khi dev_id = 0)"] --> B{"Đã đủ ≥20 khung<br/>RS485→RF mới chưa?"}
+    B -- Chưa đủ --> A
+    B -- Đủ rồi --> C["Tính hiệu số =<br/>RS485→RF − RF→RS485"]
+    C --> D{"Hiệu số > 8% ?"}
+    D -- Có --> E["Tăng redund +1<br/>(tối đa 6)"]
+    D -- Không --> F{"Hiệu số < 2% ?"}
+    F -- Có --> G["Giảm redund -1<br/>(không dưới mặc định 3)"]
+    F -- Không --> Hh["Giữ nguyên"]
+    E --> A
+    G --> A
+    Hh --> A
+    style D fill:#FFF8EC,stroke:#F5A623
+    style E fill:#FDEDED,stroke:#D63C3C,color:#D63C3C
+    style G fill:#EAF7EE,stroke:#22A55A,color:#22A55A
+    </div>
+  </div>
+  <p class="diagram-cap">Chạy trên Hub vì đây là board DUY NHẤT mà "hiệu số" phản ánh đúng mất gói thật (1 request → kỳ vọng đúng 1 response). Trên Slave, chỉ số này luôn cao giả tạo do đặc thù broadcast (mục so sánh bên dưới) nên KHÔNG chạy thuật toán này ở đó.</p>
+
+  <div class="compare-grid">
+    <div class="compare-card bad">
+      <div class="ctitle">✗ Heartbeat loss‰ — chỉ số cũ, dễ đánh lừa</div>
+      <p>Đo riêng khung heartbeat (tần suất thấp, có redundancy riêng) — dễ lọt qua nhiễu hơn khung dữ liệu thật. Case thực tế: dev_id có loss‰ = 0% nhưng vẫn rớt frame dữ liệu thật.</p>
+    </div>
+    <div class="compare-card good">
+      <div class="ctitle">✓ Hiệu số RS485→RF/RF→RS485 — chỉ số mới, đo đúng</div>
+      <p>Đo trực tiếp trên chính lưu lượng dữ liệu thật đang chạy qua bridge — phản ánh đúng tỷ lệ request không có hồi âm, dùng làm input cho vòng tự điều chỉnh redundancy.</p>
+    </div>
+  </div>
+
+  <h3>4. Kiến trúc 3 task RTOS — vì sao lỗi ghép khung từng khó bắt</h3>
+  <div class="diagram-box">
+    <div class="mermaid">
+flowchart TB
+    subgraph T1["Task RS485 — ưu tiên CAO NHẤT"]
+        R1["Đọc RS485 RX"] --> R2["Tách khung<br/>(khoảng lặng ≥1.75ms)"]
+        R2 --> Q1[("Queue g_qToRF")]
+        Q2[("Queue g_qToRS485")] --> R3["Gửi ra RS485<br/>(non-blocking)"]
+    end
+    subgraph T2["Task RF — ưu tiên TRUNG BÌNH"]
+        Q1 --> F1["rf_send()<br/>redundant TX"]
+        F2["rf_process()<br/>nhận + heartbeat"] --> Q2
+        F3["adapt_redundancy_check()<br/>chỉ khi dev_id = 0"]
+    end
+    subgraph T3["Task CLI — ưu tiên THẤP NHẤT"]
+        L1["In log 'FWD ...'"]
+    end
+    style T1 fill:#F4F6F8,stroke:#D8DEE5
+    style T2 fill:#F4F6F8,stroke:#D8DEE5
+    style T3 fill:#F4F6F8,stroke:#D8DEE5
+    </div>
+  </div>
+  <p class="diagram-cap">Task RS485 phải quay lại đọc RX đúng hạn (trong 1.75ms) để tách khung Modbus — bất kỳ điều gì "chiếm dụng" task này dù chỉ vài ms (in log, <code>flush()</code> chờ TX xong, hay chủ động bỏ qua RX lúc tự gửi) đều làm dính 2 khung làm 1. Cả 5 vòng fix ở timeline dưới đây đều xoay quanh việc dọn sạch từng nguồn "chiếm dụng" này.</p>
+</section>
+
+<section id="timeline">
+  <h2>Diễn tiến điều tra &amp; các fix đã triển khai</h2>
+  <div class="timeline">
+
+    <div class="tl-item">
+      <div class="tl-dot"></div>
+      <div class="tl-date">07/07 — Baseline</div>
+      <div class="tl-title">Phát hiện mất frame ~5.8%, tách 2 cơ chế lỗi</div>
+      <div class="tl-body">88.7 phút test đầu tiên: lỗi tách khung RS485 (dính 2 khung) ở chiều lệnh, lỗi CRC/bit ở chiều phản hồi RF. RF LINK báo UP suốt phiên → không phải rớt kết nối, mà mất gói rải rác.</div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot warn"></div>
+      <div class="tl-date">07/07 — Fix lần 1</div>
+      <div class="tl-title">Tách việc in log ra khỏi task RS485</div>
+      <div class="tl-body">Log "FWD ..." từng in trực tiếp trong task ưu tiên cao nhất, chiếm quá ngưỡng 1.75ms tách khung. Chuyển việc in sang task CLI qua ring buffer tự viết (2 lần vá RAM tràn trong quá trình này). <b>Kết quả retest 30 phút: tần suất ghép khung KHÔNG đổi (39.7 vs 39.9/giờ)</b> — chưa phải nguyên nhân chính.</div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot warn"></div>
+      <div class="tl-date">07/07 — Fix lần 2</div>
+      <div class="tl-title">rs485_send() không còn block CPU</div>
+      <div class="tl-body">Phát hiện <code>flush()</code> block vài ms mỗi lần gửi phản hồi, đủ để trôi khung Modbus kế tiếp. Đổi sang API non-blocking (<code>rs485_send_start/poll/pending</code>). <b>Kết quả retest 12.4 giờ qua đêm: tần suất ghép khung VẪN không đổi (~41.6/giờ)</b> — hướng chẩn đoán đúng nhưng fix chưa đủ.</div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot"></div>
+      <div class="tl-date">07/07 — Bug phụ (đã sửa)</div>
+      <div class="tl-title">False-positive hiển thị "(&gt;16B)" do rút gọn preview log</div>
+      <div class="tl-body">Vá RAM ở fix lần 2 lỡ giảm preview log 8→4 byte, khiến app giám sát hiểu nhầm gần 100% khung là "quá dài/ghép" (chỉ là bug hiển thị, dữ liệu thật vẫn đúng 7-8 byte, CRC=0). Đã sửa bằng cách đổi kiến trúc hàng đợi log (1 chỗ trống × 8 byte), vừa hết bug vừa tốn RAM ít hơn.</div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot pass"></div>
+      <div class="tl-date">08/07 — Fix lần 5</div>
+      <div class="tl-title">Xả sạch echo/rác + reset buffer ngay khi TX xong</div>
+      <div class="tl-body">Nguyên nhân thật: sau fix lần 2, bridge "chủ động bỏ qua" đọc RX trong lúc tự gửi — tạo lại đúng 1 "cửa sổ mù" tương tự (khác cơ chế). Fix: xả byte echo + xoá phần khung đang gom dở ngay khi vừa gửi xong. <b>Kết quả: ghép khung giảm ~65% (41.6 → 14.6 lần/giờ)</b> — có tác dụng thật, không tăng RAM.</div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot"></div>
+      <div class="tl-date">08/07</div>
+      <div class="tl-title">Công cụ chẩn đoán rf scan + UI trực quan</div>
+      <div class="tl-body">Thêm lệnh CLI quét 126 kênh nRF24 tìm kênh ít nhiễu nhất, và tích hợp vào app test (nút quét + ô chọn kênh tối ưu, tab riêng "Tối ưu RF"). An toàn tuyệt đối với các fix RS485 (không đụng bridge/RTOS).</div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot warn"></div>
+      <div class="tl-date">08/07 — Phát hiện quan trọng</div>
+      <div class="tl-title">"Lỗi tổng %" không giảm dù ghép khung đã giảm mạnh</div>
+      <div class="tl-body">Lỗi khung RAW chỉ còn 0.36%, nhưng tỷ lệ request-không-phản-hồi vẫn ~13-14% (cao hơn baseline gốc). Kết luận: nút thắt cổ chai thật sự đã chuyển hẳn sang tầng RF (mất gói do redundant-TX không đủ trong điều kiện kênh nhiễu/tín hiệu yếu), không còn liên quan tới lỗi tách khung RS485 nữa.</div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot warn"></div>
+      <div class="tl-date">08/07 — Đang triển khai</div>
+      <div class="tl-title">Redundancy tự thích ứng theo lỗi thực đo (chỉ trên Hub)</div>
+      <div class="tl-body">Board Hub tự tăng/giảm số lần gửi lặp (redundant-TX) dựa trên hiệu số RS485→RF/RF→RS485 thật (không dùng heartbeat loss‰ vì dễ đánh lừa). Chỉ chạy trên Hub vì trên Slave chỉ số này vô nghĩa do đặc thù mạng broadcast. 1 vòng vá RAM tràn 8 byte trong lúc làm (đã xử lý bằng cách đổi kiểu dữ liệu). <b>Test sơ bộ hôm nay: khá khả quan — đang chạy thêm 1 giờ để xác nhận.</b></div>
+    </div>
+
+  </div>
+</section>
+
+<section id="status">
+  <h2>Trạng thái hiện tại</h2>
+  <div class="status-banner">
+    <div class="dot"></div>
+    <div>
+      <b>Đang soak-test thêm 1 giờ</b> để xác nhận hiệu quả của redundancy tự thích ứng trước khi kết luận chính thức.
+      Kết quả sơ bộ (ngắn hạn) khả quan, nhưng cần mẫu đủ dài — lịch sử điều tra ở trên cho thấy nhiều lần mẫu ngắn (4 phút, 6.9 phút) từng gây kết luận sai lệch cả hai chiều.
+    </div>
+  </div>
+</section>
+
+<section id="next">
+  <h2>Việc tiếp theo</h2>
+  <div class="card">
+    <ol style="margin:0;padding-left:20px;font-size:13.5px;">
+      <li>Hoàn tất soak test 1 giờ đang chạy, so sánh "Lỗi tổng %" trước/sau khi bật redundancy tự thích ứng.</li>
+      <li>Nếu vẫn còn lỗi cao ở chiều Slave→Hub (redundancy tự thích ứng hiện chỉ tác động chiều Hub→Slave): cân nhắc tăng tay <code>rf redund</code> trên các slave hay rớt, đối chiếu qua <code>rf devices</code>.</li>
+      <li>Chạy <code>rf scan</code> tại đúng vị trí lắp đặt thật, đổi kênh nếu kênh 120 hiện tại không phải kênh sạch nhất — áp dụng đồng bộ trên TẤT CẢ board (không có cơ chế tự đồng bộ kênh qua RF).</li>
+      <li>Chưa cần làm: redundancy riêng theo từng dev_id (cần thêm bảng ánh xạ địa chỉ Modbus↔dev_id, việc lớn hơn), mở rộng lên 32 thiết bị.</li>
+    </ol>
+  </div>
+</section>
+
+<section id="detail">
+  <h2>Chi tiết dữ liệu từng vòng test</h2>
+
+  <details>
+    <summary>Baseline gốc — 88.7 phút (07/07, 13:56–15:25)</summary>
+    <table>
+      <tr><th>Chỉ số</th><th>Giá trị</th></tr>
+      <tr><td>Tổng lệnh RS485→RF / phản hồi RF→RS485</td><td class="num">19.071 / 17.965</td></tr>
+      <tr><td>Frame hụt (không khớp)</td><td class="num">1.106 (~5.8%)</td></tr>
+      <tr><td>Lỗi tổng % theo cửa sổ 5s</td><td class="num">2.86% – 8.23% (tb 4.68%)</td></tr>
+      <tr><td>Lỗi ứng dụng (ModbusLog)</td><td class="num">127/1.666 (~7.6%)</td></tr>
+      <tr><td>CRC lỗi / frame ngắn (raw, cả 2 chiều)</td><td class="num">327 / 415</td></tr>
+      <tr><td>RF LINK</td><td class="num">UP suốt phiên</td></tr>
+    </table>
+  </details>
+
+  <details>
+    <summary>Retest 30 phút sau fix lần 1 (07/07, 18:00)</summary>
+    <table>
+      <tr><th>Chỉ số</th><th>Trước fix</th><th>Sau fix lần 1</th></tr>
+      <tr><td>Lỗi tổng % (tb cửa sổ 5s)</td><td class="num">4.68%</td><td class="num">5.56%</td></tr>
+      <tr><td>ModbusLog lỗi</td><td class="num">7.6%</td><td class="num">9.7%</td></tr>
+      <tr><td>Merge frame (12-16B) / tổng khung</td><td class="num">59/19.218</td><td class="num">17/6.816</td></tr>
+      <tr><td><b>Tần suất merge/giờ</b></td><td class="num"><b>39.9</b></td><td class="num"><b>39.7 (không đổi)</b></td></tr>
+    </table>
+  </details>
+
+  <details>
+    <summary>Test qua đêm 12.4 giờ sau fix lần 2 (07/07 19:46 → 08/07 08:12)</summary>
+    <p style="font-size:13.5px;">518 lần ghép khung / 12.44 giờ ≈ <b>41.6 lần/giờ</b> — gần như không đổi so với baseline (39.9/giờ). Xác nhận fix lần 2 (non-blocking <code>rs485_send()</code>) chưa giải quyết được vấn đề do "cửa sổ mù" tái xuất hiện theo cơ chế khác (bỏ qua đọc RX chủ động thay vì bị block).</p>
+  </details>
+
+  <details>
+    <summary>Retest 65.6 phút sau fix lần 5 (08/07, 10:06–11:12) — dữ liệu mới nhất trước khi triển khai adaptive redundancy</summary>
+    <table>
+      <tr><th>Chỉ số</th><th>Baseline gốc</th><th>Sau fix lần 5</th></tr>
+      <tr><td>Tần suất ghép khung (9-16B)</td><td class="num">~41.6/giờ</td><td class="num g">~14.6/giờ (↓65%)</td></tr>
+      <tr><td>CRC lỗi</td><td class="num">—</td><td class="num">20/20.836 (~0.1%)</td></tr>
+      <tr><td>Frame ngắn (1-4B)</td><td class="num">—</td><td class="num">40/20.836 (~0.19%)</td></tr>
+      <tr><td>Tổng lỗi khung RAW (CRC+ngắn+ghép)</td><td class="num">~2%</td><td class="num g">0.36%</td></tr>
+      <tr><td>Lỗi tổng % (tb cửa sổ 5s)</td><td class="num">4.68%</td><td class="num r">13.40% (↑ gần 3 lần)</td></tr>
+      <tr><td>Lỗi ứng dụng (ModbusLog)</td><td class="num">7.6%</td><td class="num r">12.05%</td></tr>
+    </table>
+    <p style="font-size:13.5px;">Kết luận: lỗi khung RAW giảm mạnh (đúng như kỳ vọng của fix lần 5), nhưng "Lỗi tổng %" tăng — chứng minh nút thắt cổ chai đã chuyển hẳn sang tầng RF, không còn liên quan RS485 nữa.</p>
+  </details>
+
+  <details>
+    <summary>Nguồn dữ liệu (file log gốc)</summary>
+    <ul style="font-size:13px;">
+      <li><code>docs/Log_Poll_1000ms/</code> — baseline gốc, 07/07 13:56</li>
+      <li><code>docs/File_Log_17h-07-07-2026/</code> — retest 4 phút sau fix lần 1 (mẫu quá ngắn, không kết luận được)</li>
+      <li><code>docs/File_Log_18h-07-07-2026/</code> — retest 30 phút sau fix lần 1</li>
+      <li><code>docs/File_Log_19-07-07-2026/</code> — retest sau fix lần 2 (phát hiện bug hiển thị "(&gt;16B)")</li>
+      <li><code>docs/File_Log_07_08-07-2026/</code> — test qua đêm 12.4 giờ sau fix lần 2</li>
+      <li><code>docs/File_Log_11h_08-07-2026/</code> — retest 65.6 phút sau fix lần 5</li>
+    </ul>
+    <p style="font-size:12.5px;color:var(--dis);">Báo cáo kỹ thuật đầy đủ (12 mục, phân tích chi tiết từng dòng log): <code>docs/Bao_cao_mat_frame_Log_Poll_1000ms_20260707.md</code></p>
+  </details>
+
+</section>
+
+<footer>
+  Tài liệu tổng hợp tự động từ báo cáo kỹ thuật <code>Bao_cao_mat_frame_Log_Poll_1000ms_20260707.md</code> — dùng để trình bày nhanh cho team, không thay thế báo cáo kỹ thuật chi tiết.
+</footer>
+
+</div>
+
+<script>
+  const ctx = document.getElementById('chartMerge').getContext('2d');
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: ['Baseline\n(gốc)', 'Sau fix #1\n(30 phút)', 'Sau fix #2\n(12.4 giờ)', 'Sau fix #5\n(65.6 phút)'],
+      datasets: [
+        {
+          type: 'bar',
+          label: 'Ghép khung RS485 (lần/giờ)',
+          data: [39.9, 39.7, 41.6, 14.6],
+          backgroundColor: '#295C9A',
+          yAxisID: 'y'
+        },
+        {
+          type: 'line',
+          label: 'Lỗi tổng % (mất gói RF thật)',
+          data: [4.68, 5.56, null, 13.40],
+          borderColor: '#D63C3C',
+          backgroundColor: '#D63C3C',
+          yAxisID: 'y1',
+          tension: 0.25,
+          spanGaps: true
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'bottom', labels: { font: { size: 11 } } },
+        title: { display: false }
+      },
+      scales: {
+        y: {
+          type: 'linear',
+          position: 'left',
+          title: { display: true, text: 'Ghép khung (lần/giờ)', font: { size: 11 } },
+          beginAtZero: true
+        },
+        y1: {
+          type: 'linear',
+          position: 'right',
+          title: { display: true, text: 'Lỗi tổng %', font: { size: 11 } },
+          beginAtZero: true,
+          grid: { drawOnChartArea: false }
+        }
+      }
+    }
+  });
+</script>
+
+</body>
+</html>

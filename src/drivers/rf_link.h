@@ -135,3 +135,17 @@ uint32_t rf_dev_age_s(uint8_t dev_id); // so GIAY (khong phai ms - xem ghi chu R
 // tich luy vinh vien. Tra ve 0xFFFF neu chua du du lieu (< 10 giay hoac chua
 // tung thay dev_id nay).
 uint16_t rf_dev_loss_permille(uint8_t dev_id);
+
+// ----- Quet nhieu kenh (chan doan thu cong, KHONG dung trong van hanh binh
+// thuong - 2026-07-08, huong toi uu #3 da de xuat: kiem tra vat ly/nhieu kenh
+// RF thuc te thay vi chi doan). Do "carrier detect" (RPD - Received Power
+// Detector cua nRF24L01+) tren tung kenh 0-125 trong 1 khoang ngan de tim kenh
+// IT NHIEU NHAT quanh vi tri lap dat that (WiFi/Bluetooth xung quanh). GIAN
+// DOAN lien lac RF binh thuong trong luc quet (~1-2 giay, phai doi kenh lien
+// tuc nen khong nghe duoc frame that) - CHI goi thu cong qua CLI "rf scan" luc
+// khao sat lap dat, KHONG tu dong goi trong van hanh. Tu khoi phuc dung kenh +
+// trang thai lang nghe binh thuong sau khi quet xong. Tu khoa/mo g_muSPI rieng
+// (mat vai giay) - KHONG goi tu ben trong 1 ham dang giu san g_muSPI.
+#define RF_SCAN_NUM_CHANNELS 126
+#define RF_SCAN_SAMPLES 100 // so lan doc RPD/kenh (~100 x >=130us/lan ~= 13ms/kenh -> ~1.6s toan bo 126 kenh)
+void rf_scan_channels(uint8_t out_activity[RF_SCAN_NUM_CHANNELS]); // out_activity[ch] = so lan phat hien carrier (0..RF_SCAN_SAMPLES, cang thap cang it nhieu)

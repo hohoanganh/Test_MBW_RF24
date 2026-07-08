@@ -2,9 +2,9 @@
 #include "mbw_common.h"
 #include "mbw_drv.h"
 #include "rtos_glue.h"
-#include <string.h>
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 // ===== QUY TAC KHOA g_muSerial trong file nay (tranh deadlock voi g_muSPI -
 // xem giai thich day du trong rf_link.cpp) =====
@@ -12,8 +12,8 @@
 // goi cac ham rf_*/flash_* (chung tu khoa/mo g_muSPI rieng ben trong). Vi vay
 // MOI NHANH lenh trong cli_execute() phai: (1) goi xong cac ham driver truoc,
 // luu ket qua vao bien cuc bo, (2) SAU DO moi dbg_lock() -> in toan bo phan
-// hoi -> dbg_unlock(). KHONG dbg_lock() roi moi goi rf_send()/flash_print_id()/...
-// o giua.
+// hoi -> dbg_unlock(). KHONG dbg_lock() roi moi goi
+// rf_send()/flash_print_id()/... o giua.
 
 #define CLI_BUF_SIZE 96
 
@@ -36,7 +36,8 @@ void uart_log(const char *msg) { SerialDBG.println(msg); }
 static void print_help() {
   dbg_lock();
   SerialDBG.println("id / ver / help");
-  SerialDBG.println("led  (toggle LED_LIFE) / beep on|off|test  (test = bip thu coi PWM)");
+  SerialDBG.println(
+      "led  (toggle LED_LIFE) / beep on|off|test  (test = bip thu coi PWM)");
   SerialDBG.println("dip  (doc DIP: DEVID + BAUD)");
   SerialDBG.println("rs485 <text>  (gui thu RS485)");
   SerialDBG.println("rsl  (loopback RS485, can noi tat A-B)");
@@ -44,20 +45,32 @@ static void print_help() {
   SerialDBG.println("baud rs485 <1200-921600>");
   SerialDBG.println("flash / fwr  (SPI flash W25Q128)");
   SerialDBG.println("rtc  / rtc set <hh:mm:ss>");
-  SerialDBG.println("net id <0-63>  / net id  (NET_ID chung ca deployment, luu Flash)");
+  SerialDBG.println(
+      "net id <0-63>  / net id  (NET_ID chung ca deployment, luu Flash)");
   SerialDBG.println("rf id  (kiem tra nRF24L01 co mat)");
-  SerialDBG.println("rf ch <0-125>  / rf netid <0-63> (doi NET_ID tam thoi, KHONG luu Flash - dung 'net id' de luu)");
+  SerialDBG.println("rf ch <0-125>  / rf netid <0-63> (doi NET_ID tam thoi, "
+                    "KHONG luu Flash - dung 'net id' de luu)");
   SerialDBG.println("rf tx <text>  (gui khong day, dung ghep cap 2 board)");
-  SerialDBG.println("rf stat / rf reset  (LINK UP/DOWN, LOSS% toan mang, REDUND, REPEATER/RELAY)");
-  SerialDBG.println("rf devices  (liet ke dev_id + UP/DOWN + LOSS%o rieng tung thiet bi)");
+  SerialDBG.println("rf stat / rf reset  (LINK UP/DOWN, LOSS% toan mang, "
+                    "REDUND, REPEATER/RELAY)");
+  SerialDBG.println(
+      "rf devices  (liet ke dev_id + UP/DOWN + LOSS%o rieng tung thiet bi)");
   SerialDBG.println("rf dev <0-63>  (chi tiet link 1 dev_id rieng)");
-  SerialDBG.println("rf redund <2-6>  / rf redund  (so lan gui lap CO DINH, chi RAM)");
-  SerialDBG.println("rf repeater on|off  / rf repeater  (relay 1-hop cho node xa, luu Flash; hoac giu S2 3s)");
-  SerialDBG.println("bridge on|off  (mac dinh ON - chuc nang cau RS485<->Wireless that)");
-  SerialDBG.println("bridge log on|off  (in dong 'FWD ...' khi relay, mac dinh OFF - bat khi test)");
+  SerialDBG.println("rf scan  (quet 126 kenh tim kenh IT NHIEU NHAT - GIAN "
+                    "DOAN lien lac RF ~1-2s luc quet)");
+  SerialDBG.println(
+      "rf redund <2-6>  / rf redund  (so lan gui lap CO DINH, chi RAM)");
+  SerialDBG.println("rf repeater on|off  / rf repeater  (relay 1-hop cho node "
+                    "xa, luu Flash; hoac giu S2 3s)");
+  SerialDBG.println(
+      "bridge on|off  (mac dinh ON - chuc nang cau RS485<->Wireless that)");
+  SerialDBG.println("bridge log on|off  (in dong 'FWD ...' khi relay, mac dinh "
+                    "OFF - bat khi test)");
   SerialDBG.println("bridge stat / bridge reset");
-  SerialDBG.println("rtos stat  (RAM/stack con lai cua 3 task - kiem tra RTOS)");
-  SerialDBG.println("wdt stat  (watchdog IWDG: co reset lan truoc, dang feed hay khong, tuoi diem danh tung task)");
+  SerialDBG.println(
+      "rtos stat  (RAM/stack con lai cua 3 task - kiem tra RTOS)");
+  SerialDBG.println("wdt stat  (watchdog IWDG: co reset lan truoc, dang feed "
+                    "hay khong, tuoi diem danh tung task)");
   dbg_unlock();
 }
 
@@ -99,8 +112,10 @@ static void cli_execute(char *cmd) {
       buzzer_beep(BUZZER_FREQ, 300); // bip test coi PWM (2000Hz 300ms)
     dbg_lock();
     if (is_test) {
-      SerialDBG.println(buzzer_is_muted() ? "BEEP TEST (dang MUTE - khong keu, go 'beep on' truoc)"
-                                          : "BEEP TEST: coi PWM 2000Hz 300ms");
+      SerialDBG.println(
+          buzzer_is_muted()
+              ? "BEEP TEST (dang MUTE - khong keu, go 'beep on' truoc)"
+              : "BEEP TEST: coi PWM 2000Hz 300ms");
     } else if (valid || strcmp(cmd, "beep") == 0) {
       SerialDBG.println(buzzer_is_muted() ? "BEEP OFF" : "BEEP ON");
     } else {
@@ -156,7 +171,8 @@ static void cli_execute(char *cmd) {
 
   else if (strncmp(cmd, "baud rs485", 10) == 0) {
     unsigned long b = 0;
-    bool valid = sscanf(cmd, "baud rs485 %lu", &b) == 1 && b >= 1200 && b <= 921600;
+    bool valid =
+        sscanf(cmd, "baud rs485 %lu", &b) == 1 && b >= 1200 && b <= 921600;
     if (valid)
       rs485_set_baud(b);
     dbg_lock();
@@ -184,7 +200,8 @@ static void cli_execute(char *cmd) {
   // ----- RTC -----
   else if (strncmp(cmd, "rtc set", 7) == 0) {
     unsigned int hh, mm, ss, dd, mo, yy;
-    if (sscanf(cmd, "rtc set %u/%u/%u %u:%u:%u", &dd, &mo, &yy, &hh, &mm, &ss) == 6) {
+    if (sscanf(cmd, "rtc set %u/%u/%u %u:%u:%u", &dd, &mo, &yy, &hh, &mm,
+               &ss) == 6) {
       bool okd = rtc_set_date((uint8_t)dd, (uint8_t)mo, (uint8_t)yy);
       bool okt = rtc_set_time((uint8_t)hh, (uint8_t)mm, (uint8_t)ss);
       dbg_lock();
@@ -206,14 +223,15 @@ static void cli_execute(char *cmd) {
     rtc_print();
   }
 
-  // ----- NET_ID (chung ca deployment, luu Flash - xem flashmem.h/muc 3.2.b) -----
+  // ----- NET_ID (chung ca deployment, luu Flash - xem flashmem.h/muc 3.2.b)
+  // -----
   else if (strncmp(cmd, "net id", 6) == 0) {
     int id;
     bool has_arg = sscanf(cmd, "net id %d", &id) == 1;
     if (has_arg) {
       bool valid = id >= 0 && id <= 63;
       if (valid) {
-        net_id_save((uint8_t)id);   // tu khoa/mo g_muSPI rieng, luu qua Flash
+        net_id_save((uint8_t)id); // tu khoa/mo g_muSPI rieng, luu qua Flash
         rf_set_network_id((uint8_t)id); // ap dung ngay, khong can reset board
       }
       dbg_lock();
@@ -229,7 +247,8 @@ static void cli_execute(char *cmd) {
       uint8_t stored = net_id_load(); // tu khoa/mo g_muSPI rieng
       dbg_lock();
       if (stored == NET_ID_UNSET) {
-        SerialDBG.println("NET_ID: CHUA CAU HINH - dung \"net id <0-63>\" de set");
+        SerialDBG.println(
+            "NET_ID: CHUA CAU HINH - dung \"net id <0-63>\" de set");
       } else {
         SerialDBG.print("NET_ID=");
         SerialDBG.println(stored);
@@ -242,7 +261,8 @@ static void cli_execute(char *cmd) {
   else if (strcmp(cmd, "rf id") == 0) {
     bool ok = rf_ok(); // tu khoa/mo g_muSPI rieng
     dbg_lock();
-    SerialDBG.println(ok ? "RF_ID=OK (nRF24L01 present)" : "RF_ID=FAIL (not found)");
+    SerialDBG.println(ok ? "RF_ID=OK (nRF24L01 present)"
+                         : "RF_ID=FAIL (not found)");
     dbg_unlock();
   }
 
@@ -280,7 +300,8 @@ static void cli_execute(char *cmd) {
     char text[64] = "MBW RF TEST";
     if (sscanf(cmd, "rf tx %63[^\n]", text) != 1)
       strcpy(text, "MBW RF TEST");
-    bool ok = rf_send((const uint8_t *)text, (uint16_t)strlen(text)); // tu khoa/mo g_muSPI rieng
+    bool ok = rf_send((const uint8_t *)text,
+                      (uint16_t)strlen(text)); // tu khoa/mo g_muSPI rieng
     dbg_lock();
     SerialDBG.println(ok ? "RF_TX=OK" : "RF_TX=FAIL (too long)");
     dbg_unlock();
@@ -324,7 +345,8 @@ static void cli_execute(char *cmd) {
     // quality"/"RSSI" cua bo telemetry: LINK UP/DOWN, dev_id nghe thay gan
     // nhat, thoi gian tu lan nghe cuoi, ty le mat uoc luong va do du phong
     // (redundant TX) dang tu dieu chinh. Xem "rf devices"/"rf dev <id>" de
-    // biet CHINH XAC tung dev_id dang UP/DOWN (quan trong khi co N>1 slave). -----
+    // biet CHINH XAC tung dev_id dang UP/DOWN (quan trong khi co N>1 slave).
+    // -----
     SerialDBG.print("RF_LINK=");
     SerialDBG.print(link_up ? "UP" : "DOWN");
     SerialDBG.print(" LAST_DEV_ID=");
@@ -347,7 +369,8 @@ static void cli_execute(char *cmd) {
     // ----- Breakdown TUNG dev_id ngay tren dong status (khong con phai go
     // "rf devices" rieng): voi N slave, dong RF_LINK= toan cuc luon UP neu con
     // nghe duoc BAT KY ai - dong nay chi ro THIET BI NAO dang UP/DOWN + so giay
-    // ke tu lan nghe cuoi. Bo qua dev_id cua chinh minh (khong tu nghe minh). -----
+    // ke tu lan nghe cuoi. Bo qua dev_id cua chinh minh (khong tu nghe minh).
+    // -----
     uint8_t self_id = rf_get_dev_id();
     SerialDBG.print("RF_DEVS:");
     bool any = false;
@@ -366,7 +389,8 @@ static void cli_execute(char *cmd) {
         if (dl == 0xFFFF)
           SerialDBG.print("-");
         else
-          SerialDBG.print(dl); // phan nghin (%o): TOT <20, CHAP NHAN 20-100, KEM >100
+          SerialDBG.print(
+              dl); // phan nghin (%o): TOT <20, CHAP NHAN 20-100, KEM >100
       }
       SerialDBG.print(")");
     }
@@ -379,7 +403,89 @@ static void cli_execute(char *cmd) {
   else if (strcmp(cmd, "rf reset") == 0) {
     rf_reset_stats();
     dbg_lock();
-    SerialDBG.println("OK (da dat lai ca cua so do LOSS%o theo dev_id - cho >=60s roi doc 'rf devices')");
+    SerialDBG.println("OK (da dat lai ca cua so do LOSS%o theo dev_id - cho "
+                      ">=60s roi doc 'rf devices')");
+    dbg_unlock();
+  }
+
+  // ----- Quet nhieu kenh (2026-07-08, chan doan thu cong - xem rf_link.h/.cpp).
+  // GIAN DOAN lien lac RF binh thuong ~1-2 giay trong luc quet (phai doi kenh
+  // lien tuc). Mang activity[126] nam TREN STACK cua ham nay (khong static -
+  // chi ton tai trong luc chay lenh CLI nay, khong chiem RAM tinh thuong truc). -----
+  else if (strcmp(cmd, "rf scan") == 0) {
+    dbg_lock();
+    SerialDBG.println("RF SCAN: dang quet 126 kenh (~1-2 giay, GIAN DOAN lien "
+                       "lac RF binh thuong luc quet)...");
+    dbg_unlock();
+
+    uint8_t activity[RF_SCAN_NUM_CHANNELS];
+    rf_scan_channels(activity); // tu khoa/mo g_muSPI, mat vai giay - KHONG giu g_muSerial luc nay (dung quy tac khoa dau file)
+
+    // Chon 8 kenh IT NHIEU NHAT (activity thap nhat) bang chen-sap-xep don
+    // gian tren mang 8 phan tu - re hon sap xep toan bo 126 phan tu.
+    uint8_t best_ch[8], best_val[8];
+    for (uint8_t i = 0; i < 8; i++) {
+      best_ch[i] = 0xFF;
+      best_val[i] = 0xFF;
+    }
+    for (uint16_t ch = 0; ch < RF_SCAN_NUM_CHANNELS; ch++) {
+      uint8_t v = activity[ch];
+      for (uint8_t i = 0; i < 8; i++) {
+        if (v < best_val[i]) {
+          for (uint8_t j = 7; j > i; j--) {
+            best_val[j] = best_val[j - 1];
+            best_ch[j] = best_ch[j - 1];
+          }
+          best_val[i] = v;
+          best_ch[i] = (uint8_t)ch;
+          break;
+        }
+      }
+    }
+
+    // Tu kiem chung: tim kenh ON NHAT + dem so kenh co nhieu (>0) trong toan
+    // bo 126 kenh - neu ca 126 kenh deu 0 thi nghi ngo may do dang loi (anten/
+    // ket noi RF) chu KHONG PHAI moi truong sach hoan toan (thuc te luon co it
+    // nhat vai kenh dinh WiFi/Bluetooth neu xung quanh co thiet bi 2.4GHz nao).
+    uint8_t worst_ch = 0, worst_val = 0;
+    uint16_t nonzero_cnt = 0;
+    for (uint16_t ch = 0; ch < RF_SCAN_NUM_CHANNELS; ch++) {
+      if (activity[ch] > 0)
+        nonzero_cnt++;
+      if (activity[ch] > worst_val) {
+        worst_val = activity[ch];
+        worst_ch = (uint8_t)ch;
+      }
+    }
+
+    uint8_t cur_ch = rf_get_channel();
+    dbg_lock();
+    SerialDBG.print("RF SCAN: kenh dang dung=");
+    SerialDBG.print(cur_ch);
+    SerialDBG.print(" (nhieu=");
+    SerialDBG.print(activity[cur_ch]);
+    SerialDBG.print("/");
+    SerialDBG.print(RF_SCAN_SAMPLES);
+    SerialDBG.println(")");
+    SerialDBG.print("RF SCAN: kenh ON NHAT=");
+    SerialDBG.print(worst_ch);
+    SerialDBG.print(" nhieu=");
+    SerialDBG.print(worst_val);
+    SerialDBG.print("/100, so kenh co nhieu (>0) = ");
+    SerialDBG.print(nonzero_cnt);
+    SerialDBG.println("/126 (neu =0/126: nghi ngo may do loi anten/RF, KHONG PHAI moi truong sach that)");
+    SerialDBG.println("RF SCAN: 8 kenh IT NHIEU NHAT (kenh:muc_nhieu, cang thap cang tot):");
+    for (uint8_t i = 0; i < 8; i++) {
+      if (best_ch[i] == 0xFF)
+        continue;
+      SerialDBG.print("  ch=");
+      SerialDBG.print(best_ch[i]);
+      SerialDBG.print(" nhieu=");
+      SerialDBG.print(best_val[i]);
+      SerialDBG.print("/");
+      SerialDBG.println(RF_SCAN_SAMPLES);
+    }
+    SerialDBG.println("Dung \"rf ch <n>\" de doi sang kenh tot hon neu can (chi RAM, khong tu luu Flash).");
     dbg_unlock();
   }
 
@@ -388,7 +494,8 @@ static void cli_execute(char *cmd) {
   else if (strncmp(cmd, "rf redund", 9) == 0) {
     int n;
     bool has_arg = sscanf(cmd, "rf redund %d", &n) == 1;
-    bool valid = has_arg && n >= RF_REDUNDANT_TX_MIN && n <= RF_REDUNDANT_TX_MAX;
+    bool valid =
+        has_arg && n >= RF_REDUNDANT_TX_MIN && n <= RF_REDUNDANT_TX_MAX;
     if (valid)
       rf_set_redundancy((uint8_t)n);
     uint8_t cur = rf_get_redundancy();
@@ -405,7 +512,8 @@ static void cli_execute(char *cmd) {
 
   // ----- REPEATER 1-hop (muc 6 tai lieu dinh huong): bat cho DUNG 1 board
   // trung gian giua hub va slave xa, SAU KHI da toi uu vat ly (kenh/anten/vi
-  // tri) ma LOSS%o van cao (quy trinh muc 7.3). Luu Flash - giu qua mat nguon. -----
+  // tri) ma LOSS%o van cao (quy trinh muc 7.3). Luu Flash - giu qua mat nguon.
+  // -----
   else if (strncmp(cmd, "rf repeater", 11) == 0) {
     char st[8];
     bool has_arg = sscanf(cmd, "rf repeater %7s", st) == 1;
@@ -413,7 +521,8 @@ static void cli_execute(char *cmd) {
     if (valid) {
       bool en = (strcmp(st, "on") == 0);
       rf_set_repeater(en);
-      repeater_save(en); // tu khoa/mo g_muSPI rieng - TRUOC dbg_lock() (thu tu khoa)
+      repeater_save(
+          en); // tu khoa/mo g_muSPI rieng - TRUOC dbg_lock() (thu tu khoa)
     }
     bool cur = rf_is_repeater();
     dbg_lock();
@@ -424,8 +533,10 @@ static void cli_execute(char *cmd) {
       SerialDBG.print(cur ? "ON" : "OFF");
       SerialDBG.println(valid ? " (da luu Flash)" : "");
       if (cur)
-        SerialDBG.println("LUU Y: chi nen co DUNG 1 repeater/khu vuc (dung 'rf devices' kiem tra); "
-                           "tang timeout Modbus master (>=1500ms) de co bien cho do tre them 1 hop");
+        SerialDBG.println("LUU Y: chi nen co DUNG 1 repeater/khu vuc (dung 'rf "
+                          "devices' kiem tra); "
+                          "tang timeout Modbus master (>=1500ms) de co bien "
+                          "cho do tre them 1 hop");
     }
     dbg_unlock();
   }
@@ -486,14 +597,14 @@ static void cli_execute(char *cmd) {
     dbg_unlock();
   }
 
-  // ----- EVENT LOG (su kien DOWN/UP tung dev_id + gio RTC + loss%, luu Flash) -----
+  // ----- EVENT LOG (su kien DOWN/UP tung dev_id + gio RTC + loss%, luu Flash)
+  // -----
   else if (strcmp(cmd, "log clear") == 0) {
     flashlog_clear();
     dbg_lock();
     SerialDBG.println("LOG: da xoa toan bo");
     dbg_unlock();
-  }
-  else if (strcmp(cmd, "log") == 0 || strcmp(cmd, "log dump") == 0) {
+  } else if (strcmp(cmd, "log") == 0 || strcmp(cmd, "log dump") == 0) {
     uint16_t n = flashlog_count();
     dbg_lock();
     SerialDBG.print("LOG_BEGIN n=");
@@ -507,19 +618,24 @@ static void cli_execute(char *cmd) {
       SerialDBG.print("LOG: ");
       SerialDBG.print(i);
       SerialDBG.print(' ');
-      if (r[6] < 10) SerialDBG.print('0');
+      if (r[6] < 10)
+        SerialDBG.print('0');
       SerialDBG.print(r[6]); // day
       SerialDBG.print('/');
-      if (r[7] < 10) SerialDBG.print('0');
+      if (r[7] < 10)
+        SerialDBG.print('0');
       SerialDBG.print(r[7]); // month
       SerialDBG.print(' ');
-      if (r[0] < 10) SerialDBG.print('0');
+      if (r[0] < 10)
+        SerialDBG.print('0');
       SerialDBG.print(r[0]);
       SerialDBG.print(':');
-      if (r[1] < 10) SerialDBG.print('0');
+      if (r[1] < 10)
+        SerialDBG.print('0');
       SerialDBG.print(r[1]);
       SerialDBG.print(':');
-      if (r[2] < 10) SerialDBG.print('0');
+      if (r[2] < 10)
+        SerialDBG.print('0');
       SerialDBG.print(r[2]);
       SerialDBG.print(" dev=");
       SerialDBG.print(r[3]);
@@ -547,7 +663,8 @@ static void cli_execute(char *cmd) {
       bridge_set_log(strcmp(st, "on") == 0);
     } else {
       dbg_lock();
-      SerialDBG.println(bridge_log_enabled() ? "BRIDGE LOG: ON" : "BRIDGE LOG: OFF");
+      SerialDBG.println(bridge_log_enabled() ? "BRIDGE LOG: ON"
+                                             : "BRIDGE LOG: OFF");
       dbg_unlock();
     }
   }
@@ -597,12 +714,15 @@ static void cli_execute(char *cmd) {
   }
 
   // ----- RTOS: kiem tra RAM/stack con lai THUC TE tren phan cung (chip chi
-  // 10KB RAM) - dung khi tinh chinh configTOTAL_HEAP_SIZE/stack tung task. -----
+  // 10KB RAM) - dung khi tinh chinh configTOTAL_HEAP_SIZE/stack tung task.
+  // -----
   else if (strcmp(cmd, "rtos stat") == 0) {
     size_t free_heap = xPortGetFreeHeapSize();
-    UBaseType_t hw_rs485 = g_hTaskRS485 ? uxTaskGetStackHighWaterMark(g_hTaskRS485) : 0;
+    UBaseType_t hw_rs485 =
+        g_hTaskRS485 ? uxTaskGetStackHighWaterMark(g_hTaskRS485) : 0;
     UBaseType_t hw_rf = g_hTaskRF ? uxTaskGetStackHighWaterMark(g_hTaskRF) : 0;
-    UBaseType_t hw_cli = g_hTaskCLI ? uxTaskGetStackHighWaterMark(g_hTaskCLI) : 0;
+    UBaseType_t hw_cli =
+        g_hTaskCLI ? uxTaskGetStackHighWaterMark(g_hTaskCLI) : 0;
 
     dbg_lock();
     SerialDBG.print("RTOS_FREE_HEAP_BYTES=");
@@ -631,7 +751,8 @@ static void cli_execute(char *cmd) {
     SerialDBG.print("WDT_BOOT_WAS_RESET=");
     SerialDBG.println(boot_was_reset ? "YES (lan truoc bi treo!)" : "no");
     SerialDBG.print("WDT_FEEDING=");
-    SerialDBG.println(all_alive ? "YES (ca 3 task deu song)" : "NO (co task dang treo - sap RESET!)");
+    SerialDBG.println(all_alive ? "YES (ca 3 task deu song)"
+                                : "NO (co task dang treo - sap RESET!)");
     SerialDBG.print("TASK_ALIVE_AGE_MS RS485=");
     SerialDBG.print(age_rs485);
     SerialDBG.print(" RF=");

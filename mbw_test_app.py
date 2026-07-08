@@ -94,13 +94,19 @@ RF_CNT_RE = re.compile(
 # CON NAO LINK KEM. Moi token dang "<id>:<UP|DOWN>(<age>s,<loss%o | ->)".
 RF_DEVS_RE = re.compile(r"^RF_DEVS:")
 DEV_TOKEN_RE = re.compile(r"(\d+):(UP|DOWN)\((\d+)s,(-|\d+)\)")
-# dong log su kien tu Flash: "LOG: <idx> dd/mm hh:mm:ss dev=<id> UP|DOWN loss=<n%|->"
-LOG_LINE_RE = re.compile(
-    r"^LOG:\s+(\d+)\s+(\d\d/\d\d)\s+(\d\d:\d\d:\d\d)\s+dev=(\d+)\s+(UP|DOWN)\s+loss=(\S+)")
 # dong "bridge stat" (dem khung forward + drop queue lien-task):
 BR_CNT_RE = re.compile(
     r"BRIDGE=(?:ON|OFF)\s+LOG=(?:ON|OFF)\s+RS485_TO_RF=(\d+)\s+RF_TO_RS485=(\d+)\s+"
     r"DROP_RS485_TO_RF=(\d+)\s+DROP_RF_TO_RS485=(\d+)")
+
+# ----- Ket qua "rf scan" (2026-07-08, xem hal.cpp muc "rf scan") - 3 dong tom
+# tat + toi da 8 dong "  ch=<n> nhieu=<v>/<samples>" (8 kenh it nhieu nhat). -----
+RF_SCAN_CUR_RE = re.compile(
+    r"^RF SCAN: kenh dang dung=(\d+) \(nhieu=(\d+)/(\d+)\)")
+RF_SCAN_WORST_RE = re.compile(
+    r"^RF SCAN: kenh ON NHAT=(\d+) nhieu=(\d+)/\d+, so kenh co nhieu \(>0\) = (\d+)/(\d+)")
+RF_SCAN_BEST_LINE_RE = re.compile(r"^\s*ch=(\d+) nhieu=(\d+)/(\d+)")
+RF_SCAN_DONE_RE = re.compile(r'^Dung "rf ch <n>"')
 
 
 def modbus_crc16(data):
@@ -485,7 +491,7 @@ class MbwTestApp:
         # Thu tu tab theo tan suat su dung khi LAP DAT/van hanh: giam sat +
         # danh gia RF truoc, Factory Test (chi dung o xuong) de sau cung.
         nb.add(self.tab_fwd, text="  Giám sát Forward  ")
-        nb.add(self.tab_stress, text="  Stress Test  ")
+        nb.add(self.tab_stress, text="  Tối ưu RF  ")
         nb.add(self.tab_term, text="  Terminal  ")
         nb.add(self.tab_test, text="  Factory Test  ")
 
@@ -534,10 +540,6 @@ class MbwTestApp:
         sec_btn(cfgrow, "Set & Lưu Flash", command=self._set_net_id).pack(side="left")
         self.lbl_net_id = tk.Label(cfgrow, text="", bg=MAIN_BG, fg=SEC_TX, font=FONT_SM)
         self.lbl_net_id.pack(side="left", padx=(8, 0))
-        # Log su kien mat/khoi phuc link luu Flash
-        sec_btn(cfgrow, "Xóa log", command=self._clear_flash_log).pack(side="right")
-        sec_btn(cfgrow, "📋 Đọc log sự kiện (Flash)",
-                command=self._read_flash_log).pack(side="right", padx=(0, 6))
 
         # --- Dong ho RTC (moc thoi gian cho log; can lap pin CR1220 de giu gio) ---
         cfgrow2 = tk.Frame(parent, bg=MAIN_BG)
@@ -702,6 +704,164 @@ class MbwTestApp:
         self.raw_log = tk.Text(parent, height=8, bg=TERM_BG, fg=TERM_FG, font=FONT_MONO,
                                 insertbackground=WHITE)
         self.raw_log.pack(fill="x")
+
+    # ---------- QUÉT KÊNH RF (rf scan) - chẩn đoán khảo sát lắp đặt ----------
+    def _build_rf_scan_card(self, parent):
+        """Card riêng: quét 126 kênh tìm kênh ít nhiễu nhất (lệnh CLI có sẵn
+        "rf scan", xem hal.cpp/rf_link.cpp) + ô chọn 1 trong các kênh sạch nhất
+        để áp dụng bằng "rf ch <n>". CHỈ chạy thủ công lúc khảo sát lắp đặt -
+        gián đoạn RF thật ~1-2 giây trong lúc quét."""
+        card = tk.Frame(parent, bg=WHITE, highlightbackground=CARD_BD, highlightthickness=1)
+        card.pack(fill="x", pady=(0, 8))
+
+        head = tk.Frame(card, bg=WHITE)
+        head.pack(fill="x", padx=12, pady=(10, 4))
+        tk.Label(head, text="Quét kênh RF", bg=WHITE, fg=INK, font=FONT_CARD).pack(side="left")
+        tk.Label(head, text="  —  tìm kênh 2.4GHz ít nhiễu nhất tại vị trí lắp đặt",
+                 bg=WHITE, fg=SEC_TX, font=FONT_SM).pack(side="left")
+
+        row1 = tk.Frame(card, bg=WHITE)
+        row1.pack(fill="x", padx=12, pady=(0, 8))
+        self.btn_rf_scan = flat_btn(row1, "🔎 Quét kênh RF (rf scan)", PRIMARY, PRIMARY_HOV,
+                                     command=self._rf_scan_start)
+        self.btn_rf_scan.pack(side="left")
+        self.lbl_rf_scan_status = tk.Label(row1, text="Chưa quét lần nào", bg=WHITE,
+                                            fg=DIS_FG, font=FONT_SM)
+        self.lbl_rf_scan_status.pack(side="left", padx=(10, 0))
+
+        FONT_KPI = ("Segoe UI", 13, "bold")
+
+        def _kpi(parent_row, col, caption, w):
+            f = tk.Frame(parent_row, bg=WHITE)
+            f.grid(row=0, column=col, sticky="w", padx=(0, 8))
+            tk.Label(f, text=caption, bg=WHITE, fg=SEC_TX, font=FONT_SM,
+                     width=w, anchor="w").pack(anchor="w")
+            v = tk.Label(f, text="--", bg=WHITE, fg=DIS_FG, font=FONT_KPI,
+                         width=w, anchor="w")
+            v.pack(anchor="w")
+            return v
+
+        row2 = tk.Frame(card, bg=WHITE)
+        row2.pack(fill="x", padx=12, pady=(0, 6))
+        self.lbl_scan_cur = _kpi(row2, 0, "Kênh đang dùng", 16)
+        self.lbl_scan_best = _kpi(row2, 1, "Kênh tối ưu (sạch nhất)", 20)
+        self.lbl_scan_noise = _kpi(row2, 2, "Số kênh có nhiễu", 16)
+
+        row3 = tk.Frame(card, bg=WHITE)
+        row3.pack(fill="x", padx=12, pady=(0, 6))
+        tk.Label(row3, text="Chọn kênh để áp dụng:", bg=WHITE, fg=INK,
+                 font=FONT_SM).pack(side="left")
+        self.scan_ch_var = tk.StringVar()
+        self.combo_scan_ch = ttk.Combobox(row3, textvariable=self.scan_ch_var, width=26,
+                                           state="readonly")
+        self.combo_scan_ch.pack(side="left", padx=(6, 8))
+        flat_btn(row3, "Đổi sang kênh này (rf ch)", PRIMARY, PRIMARY_HOV,
+                 command=self._rf_apply_scanned_channel).pack(side="left")
+
+        warn = tk.Frame(card, bg=WHITE)
+        warn.pack(fill="x", padx=12, pady=(0, 10))
+        tk.Label(warn, text="⚠ Phải đổi CÙNG kênh này trên TẤT CẢ board (Hub + mọi Slave) — "
+                             "không có cơ chế tự đồng bộ kênh qua RF, đổi lệch sẽ mất liên lạc.",
+                 bg=WHITE, fg=WARN_FG, font=FONT_SM, wraplength=760, justify="left").pack(anchor="w")
+
+    def _rf_scan_start(self):
+        if not self._require_conn():
+            return
+        if getattr(self, "_rf_scan_busy", False):
+            return
+        self._rf_scan_busy = True
+        self.btn_rf_scan.config(state="disabled")
+        self.lbl_rf_scan_status.config(text="Đang quét 126 kênh (~1-2 giây, RF tạm gián đoạn)...",
+                                       fg=RUN_FG)
+        threading.Thread(target=self._rf_scan_worker, daemon=True).start()
+
+    def _rf_scan_worker(self):
+        start_idx = self.link.snapshot_len()
+        self.link.send("rf scan")
+        t0 = time.time()
+        done = False
+        while time.time() - t0 < 6.0 and not done:
+            for ln in self.link.lines_since(start_idx):
+                if RF_SCAN_DONE_RE.match(ln):
+                    done = True
+                    break
+            time.sleep(0.05)
+        lines = self.link.lines_since(start_idx)
+
+        cur = worst = None
+        best_list = []
+        for ln in lines:
+            m = RF_SCAN_CUR_RE.match(ln)
+            if m:
+                cur = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                continue
+            m = RF_SCAN_WORST_RE.match(ln)
+            if m:
+                worst = (int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4)))
+                continue
+            m = RF_SCAN_BEST_LINE_RE.match(ln)
+            if m:
+                best_list.append((int(m.group(1)), int(m.group(2)), int(m.group(3))))
+
+        self._rf_scan_busy = False
+        self.root.after(0, self._rf_scan_apply, cur, worst, best_list, done)
+
+    def _rf_scan_apply(self, cur, worst, best_list, done):
+        self.btn_rf_scan.config(state="normal")
+        if not done or not best_list:
+            self.lbl_rf_scan_status.config(
+                text="Không đọc được kết quả quét (kiểm tra board đã nạp firmware có 'rf scan' chưa)",
+                fg=FAIL_FG)
+            return
+
+        now_s = datetime.now().strftime("%H:%M:%S")
+        self.lbl_rf_scan_status.config(text="Quét xong lúc %s" % now_s, fg=PASS_FG)
+
+        if cur:
+            ch, noise, samples = cur
+            self.lbl_scan_cur.config(text="%d (nhiễu %d/%d)" % (ch, noise, samples), fg=INK)
+        if worst:
+            _wch, _wval, nonzero, total = worst
+            fg = PASS_FG if nonzero == 0 else (WARN_FG if nonzero < total * 0.3 else FAIL_FG)
+            self.lbl_scan_noise.config(text="%d/%d kênh" % (nonzero, total), fg=fg)
+
+        # best_list da duoc firmware sap xep TANG DAN theo muc nhieu (kenh sach
+        # nhat dung dau) - phan tu dau tien la lua chon toi uu mac dinh.
+        best_ch, best_val, best_samples = best_list[0]
+        self.lbl_scan_best.config(text="ch=%d (nhiễu %d/%d)" % (best_ch, best_val, best_samples),
+                                  fg=PASS_FG)
+
+        items = ["ch=%d  (nhiễu %d/%d)" % (c, v, s) for c, v, s in best_list]
+        self.combo_scan_ch["values"] = items
+        self.combo_scan_ch.current(0)  # mac dinh chon kenh sach nhat
+
+    def _rf_apply_scanned_channel(self):
+        sel = self.scan_ch_var.get()
+        m = re.match(r"ch=(\d+)", sel)
+        if not m:
+            messagebox.showwarning(APP_TITLE, "Chưa quét hoặc chưa chọn kênh nào.")
+            return
+        ch = int(m.group(1))
+        if not messagebox.askyesno(
+                APP_TITLE,
+                "Đổi board này sang kênh %d?\n\n"
+                "Nhắc lại: phải đổi CÙNG kênh %d này trên TẤT CẢ board còn lại "
+                "(Hub + mọi Slave) thì mạng mới liên lạc lại được." % (ch, ch)):
+            return
+        if not self._require_conn():
+            return
+        threading.Thread(target=self._rf_apply_channel_worker, args=(ch,), daemon=True).start()
+
+    def _rf_apply_channel_worker(self, ch):
+        self.link.send("rf ch %d" % ch)
+        line = self.link.wait_for("RF_CH=", 2.0)
+        m = re.search(r"RF_CH=(\d+)", line) if line else None
+        ok = m is not None and int(m.group(1)) == ch
+        def apply():
+            self.lbl_rf_scan_status.config(
+                text=("✓ Đã đổi sang kênh %d" % ch) if ok else "Lỗi / không xác nhận được kênh mới",
+                fg=PASS_FG if ok else FAIL_FG)
+        self.root.after(0, apply)
 
     def _chk_limits(self):
         """Nguong do dai khung tu 2 o nhap (tuy chinh duoc khi dang chay)."""
@@ -1056,92 +1216,6 @@ class MbwTestApp:
             self.lbl_repeater.config(text="Repeater: %s" % ("BẬT ✓" if on else "TẮT"),
                                      fg=PASS_FG if on else SEC_TX)
 
-    # ---------- LOG SU KIEN mat/khoi phuc link (luu Flash) ----------
-    def _read_flash_log(self):
-        if not self.link.is_open():
-            return
-        threading.Thread(target=self._read_flash_log_worker, daemon=True).start()
-
-    def _read_flash_log_worker(self):
-        start_idx = self.link.snapshot_len()
-        self.link.send("log")
-        t0 = time.time()
-        done = False
-        while time.time() - t0 < 5.0 and not done:
-            for ln in self.link.lines_since(start_idx):
-                if ln.startswith("LOG_END"):
-                    done = True
-                    break
-            time.sleep(0.05)
-        rows = []
-        for ln in self.link.lines_since(start_idx):
-            if ln.startswith("LOG_END"):
-                break
-            m = LOG_LINE_RE.match(ln)
-            if m:
-                rows.append(m.groups())  # (idx, time, dev, evt, loss)
-        self.root.after(0, lambda: self._show_log_window(rows))
-
-    def _show_log_window(self, rows):
-        win = tk.Toplevel(self.root)
-        win.title("Log sự kiện mất link RF (lưu Flash)")
-        win.configure(bg=WHITE)
-        win.geometry("640x480")
-        topbar = tk.Frame(win, bg=WHITE)
-        topbar.pack(fill="x", padx=10, pady=(8, 4))
-        tk.Label(topbar, text="DOWN = mất link. Ngày/giờ theo RTC của board. Tổng: %d sự kiện" % len(rows),
-                 bg=WHITE, fg=SEC_TX, font=FONT_SM).pack(side="left")
-        sec_btn(topbar, "💾 Lưu ra file (.log/.csv)",
-                command=lambda: self._save_log_file(rows)).pack(side="right")
-        cols = ("idx", "date", "time", "dev", "evt", "loss")
-        tv = ttk.Treeview(win, columns=cols, show="headings")
-        for _c, _t, _w in [("idx", "#", 45), ("date", "Ngày", 80), ("time", "Giờ (RTC)", 90),
-                           ("dev", "dev_id", 70), ("evt", "Sự kiện", 110), ("loss", "Loss lúc đó", 90)]:
-            tv.heading(_c, text=_t)
-            tv.column(_c, width=_w, anchor="center")
-        tv.tag_configure("down", foreground=FAIL_FG)
-        tv.tag_configure("up", foreground=PASS_FG)
-        for idx, dt, tm, dev, evt, loss in rows:
-            tv.insert("", "end",
-                      values=(idx, dt, tm, dev, "MẤT LINK" if evt == "DOWN" else "Khôi phục", loss),
-                      tags=("down" if evt == "DOWN" else "up",))
-        tv.pack(fill="both", expand=True, padx=10, pady=(0, 8))
-        if not rows:
-            tk.Label(win, text="(chưa có sự kiện nào trong Flash)",
-                     bg=WHITE, fg=DIS_FG, font=FONT_SM).pack(pady=6)
-
-    def _save_log_file(self, rows):
-        """Luu log ra file .log (text) hoac .csv (mo Excel duoc)."""
-        path = filedialog.asksaveasfilename(
-            defaultextension=".log",
-            filetypes=[("Log text", "*.log"), ("CSV (Excel)", "*.csv"), ("Text", "*.txt")],
-            initialfile="mbw_rf24_log")
-        if not path:
-            return
-        try:
-            is_csv = path.lower().endswith(".csv")
-            with open(path, "w", encoding="utf-8-sig") as f:
-                if is_csv:
-                    f.write("STT,Ngay,Gio,dev_id,Su kien,Loss\n")
-                    for idx, dt, tm, dev, evt, loss in rows:
-                        f.write("%s,%s,%s,%s,%s,%s\n" % (
-                            idx, dt, tm, dev, "MAT LINK" if evt == "DOWN" else "Khoi phuc", loss))
-                else:
-                    f.write("# MBW RF24 - Log su kien mat link RF (Flash), %d su kien\n" % len(rows))
-                    for idx, dt, tm, dev, evt, loss in rows:
-                        f.write("[%s] %s %s  dev=%s  %s  loss=%s\n" % (
-                            idx, dt, tm, dev, "MAT LINK" if evt == "DOWN" else "Khoi phuc", loss))
-            messagebox.showinfo(APP_TITLE, "Đã lưu %d sự kiện:\n%s" % (len(rows), path))
-        except Exception as e:
-            messagebox.showerror(APP_TITLE, "Không lưu được file:\n%s" % e)
-
-    def _clear_flash_log(self):
-        if not self.link.is_open():
-            return
-        if not messagebox.askyesno(APP_TITLE, "Xóa TOÀN BỘ log sự kiện trong Flash?\n(không khôi phục được)"):
-            return
-        self.link.send("log clear")
-
     def _reset_rf_stats(self):
         """Gui 'rf reset' - xoa bo dem % mat goi de bat dau CUA SO DO MOI cho
         test (moi thiet bi phat 1 heartbeat/giay; cho >=10s roi doc lai)."""
@@ -1468,11 +1542,22 @@ class MbwTestApp:
         self.stress_stop_evt = threading.Event()
         self.stress_rows = []  # (t_s, link, loss, redund, d_hbtx, d_hbrx, d_crc, d_frag, d_drop, pump_ok, pump_fail)
 
+        # --- Quet kenh RF (chuyen tu tab Giam sat Forward sang day - cung la
+        # cong cu "toi uu RF" nhu Stress Test, giu tab dau don gian hon) ---
+        self._build_rf_scan_card(parent)
+
         # --- hang cau hinh ---
         card = tk.Frame(parent, bg=WHITE, highlightbackground=CARD_BD, highlightthickness=1)
         card.pack(fill="x", padx=10, pady=(10, 6))
+
+        st_head = tk.Frame(card, bg=WHITE)
+        st_head.pack(fill="x", padx=10, pady=(10, 2))
+        tk.Label(st_head, text="Stress Test", bg=WHITE, fg=INK, font=FONT_CARD).pack(side="left")
+        tk.Label(st_head, text="  —  bơm khung liên tục để đánh giá độ ổn định link RF theo thời gian",
+                 bg=WHITE, fg=SEC_TX, font=FONT_SM).pack(side="left")
+
         row = tk.Frame(card, bg=WHITE)
-        row.pack(fill="x", padx=10, pady=(8, 2))
+        row.pack(fill="x", padx=10, pady=(4, 2))
 
         def _lbl(parent_, text):
             tk.Label(parent_, text=text, bg=WHITE, fg=INK, font=FONT).pack(side="left")

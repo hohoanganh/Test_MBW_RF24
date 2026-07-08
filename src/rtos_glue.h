@@ -22,9 +22,11 @@
 //                co mutex, khong se co the 2 task tranh nhau tren cung 1 giao
 //                dich SPI gay du lieu rac / crash.
 //   g_muSerial : console Serial (SerialDBG) dung chung boi ca 3 task (CLI in
-//                phan hoi lenh, RS485 task in "FWD RS485->RF", RF task in
-//                "FWD RF->RS485"/"RF LINK ...") - khong khoa se bi xen ky tu
-//                giua cac dong in cua 2 task khac nhau.
+//                phan hoi lenh, RF task in "RF LINK ...", CLI task in ca dong
+//                "FWD ..." qua bridge_log_process() - xem ring buffer tu viet
+//                trong bridge.cpp) - khong khoa se bi xen ky tu giua cac dong
+//                in cua 2 task khac nhau. 2026-07-07: RS485 task KHONG con goi
+//                SerialDBG truc tiep nua (xem giai thich ben duoi).
 // =========================================================
 
 #define RTOS_MODBUS_MAX_LEN 250 // dong bo voi MODBUS_MAX_LEN trong bridge.cpp
@@ -76,6 +78,33 @@ extern QueueHandle_t g_qToRF;        // RS485 task -> RF task
 extern QueueHandle_t g_qToRS485;     // RF task -> RS485 task
 extern SemaphoreHandle_t g_muSPI;    // bao ve SPI1 dung chung (nRF24 + Flash)
 extern SemaphoreHandle_t g_muSerial; // bao ve console Serial dung chung
+
+// ----- LOG "FWD ..." (2026-07-07) - TACH VIEC IN ra khoi task RS485 -----
+// TRUOC DAY (bug): bridge.cpp goi THANG SerialDBG.print(...) (dbg_lock/unlock)
+// NGAY TRONG task RS485 (uu tien CAO NHAT) moi khi relay xong 1 khung ("bridge
+// log on"). In ra console la thao tac CHAM (vai ky tu -> vai ms tuy baud debug
+// UART va do dai dong), va no BLOCK CHINH task dang can giu dung khoang lang
+// 3.5 ky tu (toi thieu 1.75ms) de tach khung Modbus. 1 dong "FWD RS485->RF: 8
+// bytes: ..." in het vai ms la ĐÃ VUOT nguong 1.75ms nay -> byte dau cua khung
+// Modbus KE TIEP (da toi trong luc dang in) bi doc dinh chung voi khung dang
+// xu ly (mat byte dau / ghep 2 khung lam 1). Day la nguyen nhan chinh gay mat
+// frame do trong log Log_Poll_1000ms (xem docs/Bao_cao_mat_frame_...) - vi
+// phai bat "bridge log on" moi ghi duoc log, chinh viec bat log da lam tre
+// task RS485.
+//
+// Fix: task RS485 CHI ENQUEUE (KHONG BAO GIO block) 1 struct nho gon; task CLI
+// (uu tien THAP NHAT) moi la noi THAT SU goi SerialDBG.print - xem
+// bridge_log_process() trong bridge.cpp/h.
+//
+// 2026-07-07 (lan 2): ban dau dung xQueueCreateStatic() cho hang doi nay nhung
+// BUILD THAT BAO "region RAM overflowed by 88 bytes" - StaticQueue_t cua
+// FreeRTOS ton ~70-80 byte "control block" (list/con tro noi bo) MOI queue,
+// qua dat so voi RAM 10KB cua chip nay chi de doi 1 dong debug. Doi sang RING
+// BUFFER TU VIET tay (single-producer/single-consumer, khong dung FreeRTOS
+// queue) trong bridge.cpp: task RS485 la producer DUY NHAT (ghi head), task
+// CLI la consumer DUY NHAT (ghi tail) - khong can mutex/queue object vi doc/
+// ghi 1 bien 8-bit rieng cua moi ben la an toan tren Cortex-M (khong xen giua
+// chung), tiet kiem duoc ca ~70-80 byte control block do.
 
 // Handle cua 3 task - ghi tu main.cpp (xTaskCreate), doc tu hal.cpp cho lenh
 // CLI "rtos stat" (in xPortGetFreeHeapSize() + uxTaskGetStackHighWaterMark()

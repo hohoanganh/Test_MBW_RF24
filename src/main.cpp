@@ -113,6 +113,7 @@ static void task_cli(void *pvParameters) {
   for (;;) {
     g_aliveCLIMs = millis(); // "diem danh" cho watchdog - xem rtos_glue.h
     cli_process();   // console CLI (id/ver/help/rs485/rf/bridge/rtos stat/...)
+    bridge_log_process(); // 2026-07-07: in "FWD ..." (bridge log on) - TACH khoi task RS485, xem bridge.h/rtos_glue.h
     dip_process();   // in "DIP: ..." khi DIP switch thay doi
     btn_process();   // in "BTN: DOWN/UP" khi nhan nut S2
     buzzer_update();  // tat buzzer dung gio (non-blocking)

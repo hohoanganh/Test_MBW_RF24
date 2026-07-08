@@ -615,6 +615,32 @@ void rf_get_hb_stats(uint32_t *hb_tx, uint32_t *hb_rx) {
   if (hb_rx) *hb_rx = s_hb_rx_cnt;
 }
 
+// ----- Quet nhieu kenh (chan doan thu cong, xem giai thich day du trong
+// rf_link.h) - 2026-07-08. Dung radio.testRPD() (Received Power Detector cua
+// nRF24L01+, KHONG can dia chi/pipe khop - phat hien BAT KY nang luong RF nao
+// tren kenh, ke ca cua thiet bi khac mang WiFi/BT) de uoc luong do "on" cua
+// tung kenh 0-125. -----
+void rf_scan_channels(uint8_t out_activity[RF_SCAN_NUM_CHANNELS]) {
+  xSemaphoreTake(g_muSPI, portMAX_DELAY);
+  uint8_t saved_channel = s_channel; // khoi phuc lai sau khi quet xong
+  radio.stopListening();
+  for (uint8_t ch = 0; ch < RF_SCAN_NUM_CHANNELS; ch++) {
+    radio.setChannel(ch);
+    radio.startListening();
+    uint16_t hits = 0;
+    for (uint16_t i = 0; i < RF_SCAN_SAMPLES; i++) {
+      delayMicroseconds(130); // >=1 vong nhan cua nRF24 (khuyen nghi de testRPD/testCarrier co nghia)
+      if (radio.testRPD())
+        hits++;
+    }
+    radio.stopListening();
+    out_activity[ch] = (uint8_t)hits; // RF_SCAN_SAMPLES <= 255 nen khong tran uint8_t
+  }
+  radio.setChannel(saved_channel);
+  radio.startListening();
+  xSemaphoreGive(g_muSPI);
+}
+
 // LOSS%o THEO TUNG dev_id (muc 7.2) - xem quy trinh do dung trong rf_link.h.
 uint16_t rf_dev_loss_permille(uint8_t dev_id) {
   if (dev_id >= RF_MAX_DEV || !rf_dev_seen(dev_id))
